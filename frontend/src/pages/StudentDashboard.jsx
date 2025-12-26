@@ -2,7 +2,6 @@ import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
 import api from "../config/api";
-import Navbar from "../components/Navbar";
 import {
   FileText,
   Calendar,
@@ -22,6 +21,10 @@ import {
   BookOpen,
   Building,
   MapPin,
+  Menu,
+  ChevronLeft,
+  Activity,
+  LogOut,
 } from "lucide-react";
 
 const HOSTEL_BLOCKS = ["I1", "I2", "I3", "K1", "K2", "K3"];
@@ -63,6 +66,8 @@ const StudentDashboard = () => {
   const { user, updateProfile, deleteAccount, logout } = useAuth();
   const navigate = useNavigate();
   const [activeTab, setActiveTab] = useState("submit");
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
   const [records, setRecords] = useState([]);
   const [leaves, setLeaves] = useState([]);
   const [diets, setDiets] = useState([]);
@@ -276,31 +281,69 @@ const StudentDashboard = () => {
   };
 
   return (
-    <div className="min-h-screen bg-sky-50">
-      <Navbar />
+    <div className="min-h-screen bg-sky-50 flex">
+      {/* Mobile Sidebar Overlay */}
+      {mobileSidebarOpen && (
+        <div 
+          className="fixed inset-0 bg-black/50 z-40 lg:hidden"
+          onClick={() => setMobileSidebarOpen(false)}
+        />
+      )}
 
-      <div className="max-w-7xl mx-auto px-4 py-6">
-        {/* Header */}
-        <div className="mb-6">
-          <h1 className="text-2xl font-bold text-gray-800">
-            Student Dashboard
-          </h1>
-          <p className="text-gray-500">Welcome back, {user?.name}</p>
-        </div>
-
-        {/* Emergency Button */}
-        <div className="mb-6">
-          <a
-            href="tel:108"
-            className="inline-flex items-center gap-2 bg-red-500 text-white px-6 py-3 rounded-lg hover:bg-red-600 transition-colors font-medium shadow-lg"
+      {/* Sidebar */}
+      <aside className={`
+        fixed lg:static inset-y-0 left-0 z-50
+        ${sidebarCollapsed ? 'w-20' : 'w-64'}
+        ${mobileSidebarOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'}
+        bg-white border-r border-sky-100 shadow-lg lg:shadow-none
+        transition-all duration-300 ease-in-out flex flex-col
+      `}>
+        {/* Sidebar Header */}
+        <div className="h-16 flex items-center justify-between px-4 border-b border-sky-100">
+          {!sidebarCollapsed && (
+            <div className="flex items-center gap-2">
+              <div className="w-8 h-8 bg-sky-500 rounded-lg flex items-center justify-center">
+                <Activity className="h-5 w-5 text-white" />
+              </div>
+              <span className="font-bold text-sky-600">IIIT Health</span>
+            </div>
+          )}
+          {sidebarCollapsed && (
+            <div className="w-8 h-8 bg-sky-500 rounded-lg flex items-center justify-center mx-auto">
+              <Activity className="h-5 w-5 text-white" />
+            </div>
+          )}
+          <button 
+            onClick={() => setSidebarCollapsed(!sidebarCollapsed)}
+            className="hidden lg:flex p-1.5 rounded-lg hover:bg-sky-50 text-gray-500"
           >
-            <Phone className="h-5 w-5" />
-            Emergency: Call 108
-          </a>
+            <ChevronLeft className={`h-5 w-5 transition-transform ${sidebarCollapsed ? 'rotate-180' : ''}`} />
+          </button>
+          <button 
+            onClick={() => setMobileSidebarOpen(false)}
+            className="lg:hidden p-1.5 rounded-lg hover:bg-sky-50 text-gray-500"
+          >
+            <X className="h-5 w-5" />
+          </button>
         </div>
 
-        {/* Tabs */}
-        <div className="flex flex-wrap gap-2 mb-6 bg-white p-2 rounded-lg shadow-sm">
+        {/* User Info */}
+        {!sidebarCollapsed && (
+          <div className="px-4 py-4 border-b border-sky-100">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 bg-sky-100 rounded-full flex items-center justify-center">
+                <User className="h-5 w-5 text-sky-600" />
+              </div>
+              <div className="flex-1 min-w-0">
+                <p className="font-medium text-gray-800 truncate">{user?.name}</p>
+                <p className="text-xs text-gray-500 truncate">{user?.email}</p>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Navigation */}
+        <nav className="flex-1 px-3 py-4 space-y-1 overflow-y-auto">
           {[
             { id: "submit", label: "Submit Symptoms", icon: Send },
             { id: "records", label: "My Records", icon: FileText },
@@ -310,21 +353,99 @@ const StudentDashboard = () => {
           ].map((tab) => (
             <button
               key={tab.id}
-              onClick={() => setActiveTab(tab.id)}
-              className={`flex items-center gap-2 px-4 py-2 rounded-lg transition-colors ${
-                activeTab === tab.id
-                  ? "bg-sky-500 text-white"
-                  : "text-gray-600 hover:bg-sky-50"
-              }`}
+              onClick={() => {
+                setActiveTab(tab.id);
+                setMobileSidebarOpen(false);
+              }}
+              className={`
+                w-full flex items-center gap-3 px-3 py-2.5 rounded-lg transition-all
+                ${activeTab === tab.id
+                  ? "bg-sky-500 text-white shadow-md shadow-sky-200"
+                  : "text-gray-600 hover:bg-sky-50 hover:text-sky-600"
+                }
+                ${sidebarCollapsed ? 'justify-center' : ''}
+              `}
+              title={sidebarCollapsed ? tab.label : ''}
             >
-              <tab.icon className="h-4 w-4" />
-              {tab.label}
+              <tab.icon className="h-5 w-5 flex-shrink-0" />
+              {!sidebarCollapsed && <span className="font-medium">{tab.label}</span>}
             </button>
           ))}
-        </div>
+        </nav>
 
-        {/* Content */}
-        <div className="bg-white rounded-xl shadow-sm p-6">
+        {/* Emergency & Logout */}
+        <div className="p-3 border-t border-sky-100 space-y-2">
+          <a
+            href="tel:108"
+            className={`
+              flex items-center gap-3 px-3 py-2.5 rounded-lg
+              bg-red-500 text-white hover:bg-red-600 transition-colors
+              ${sidebarCollapsed ? 'justify-center' : ''}
+            `}
+            title={sidebarCollapsed ? 'Emergency: 108' : ''}
+          >
+            <Phone className="h-5 w-5 flex-shrink-0" />
+            {!sidebarCollapsed && <span className="font-medium">Emergency: 108</span>}
+          </a>
+          <button
+            onClick={() => {
+              logout();
+              navigate('/login');
+            }}
+            className={`
+              w-full flex items-center gap-3 px-3 py-2.5 rounded-lg
+              text-gray-600 hover:bg-gray-100 transition-colors
+              ${sidebarCollapsed ? 'justify-center' : ''}
+            `}
+            title={sidebarCollapsed ? 'Logout' : ''}
+          >
+            <LogOut className="h-5 w-5 flex-shrink-0" />
+            {!sidebarCollapsed && <span className="font-medium">Logout</span>}
+          </button>
+        </div>
+      </aside>
+
+      {/* Main Content */}
+      <div className="flex-1 flex flex-col min-h-screen">
+        {/* Top Header Bar */}
+        <header className="h-16 bg-white border-b border-sky-100 flex items-center justify-between px-4 lg:px-6 sticky top-0 z-30">
+          <div className="flex items-center gap-4">
+            <button 
+              onClick={() => setMobileSidebarOpen(true)}
+              className="lg:hidden p-2 rounded-lg hover:bg-sky-50 text-gray-600"
+            >
+              <Menu className="h-5 w-5" />
+            </button>
+            <div>
+              <h1 className="text-lg lg:text-xl font-bold text-gray-800">
+                {activeTab === 'submit' && 'Submit Symptoms'}
+                {activeTab === 'records' && 'My Medical Records'}
+                {activeTab === 'leaves' && 'Medical Leaves'}
+                {activeTab === 'diet' && 'Diet Recommendations'}
+                {activeTab === 'profile' && 'My Profile'}
+              </h1>
+              <p className="text-sm text-gray-500 hidden sm:block">
+                {activeTab === 'submit' && 'Report your symptoms for quick medical assistance'}
+                {activeTab === 'records' && 'View your consultation history'}
+                {activeTab === 'leaves' && 'Track your medical leave applications'}
+                {activeTab === 'diet' && 'Your personalized diet recommendations'}
+                {activeTab === 'profile' && 'Manage your account details'}
+              </p>
+            </div>
+          </div>
+          <div className="flex items-center gap-3">
+            <div className="hidden sm:flex items-center gap-2 px-3 py-1.5 bg-sky-50 rounded-full">
+              <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div>
+              <span className="text-sm text-sky-700">Online</span>
+            </div>
+          </div>
+        </header>
+
+        {/* Page Content */}
+        <main className="flex-1 p-4 lg:p-6 overflow-auto">
+          <div className="max-w-5xl mx-auto">
+            {/* Content Cards */}
+            <div className="bg-white rounded-xl shadow-sm border border-sky-100 p-6">
           {/* Submit Symptoms Tab */}
           {activeTab === "submit" && (
             <div>
@@ -1028,7 +1149,9 @@ const StudentDashboard = () => {
               )}
             </div>
           )}
-        </div>
+            </div>
+          </div>
+        </main>
       </div>
     </div>
   );
