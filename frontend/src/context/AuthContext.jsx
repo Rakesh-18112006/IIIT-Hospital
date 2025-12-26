@@ -1,4 +1,4 @@
-import { createContext, useContext, useState, useEffect, useMemo } from "react";
+import { createContext, useContext, useState, useMemo } from "react";
 import { signInWithPopup, signOut } from "firebase/auth";
 import { auth, googleProvider } from "../config/firebase";
 import api from "../config/api";
@@ -40,7 +40,6 @@ export const AuthProvider = ({ children }) => {
         email: googleUser.email,
         name: googleUser.displayName,
         googleId: googleUser.uid,
-        studentId: `STU${Date.now()}`,
       });
 
       const userData = response.data;
@@ -51,6 +50,56 @@ export const AuthProvider = ({ children }) => {
       return userData;
     } catch (error) {
       console.error("Google sign in error:", error);
+      throw error;
+    }
+  };
+
+  // Complete student profile
+  const completeProfile = async (profileData) => {
+    try {
+      const response = await api.put("/auth/complete-profile", profileData);
+      const userData = { ...user, ...response.data };
+      localStorage.setItem("user", JSON.stringify(userData));
+      setUser(userData);
+      return userData;
+    } catch (error) {
+      console.error("Complete profile error:", error);
+      throw error;
+    }
+  };
+
+  // Update student profile
+  const updateProfile = async (profileData) => {
+    try {
+      const response = await api.put("/auth/profile", profileData);
+      const userData = { ...user, ...response.data };
+      localStorage.setItem("user", JSON.stringify(userData));
+      setUser(userData);
+      return userData;
+    } catch (error) {
+      console.error("Update profile error:", error);
+      throw error;
+    }
+  };
+
+  // Get profile
+  const getProfile = async () => {
+    try {
+      const response = await api.get("/auth/profile");
+      return response.data;
+    } catch (error) {
+      console.error("Get profile error:", error);
+      throw error;
+    }
+  };
+
+  // Delete account
+  const deleteAccount = async () => {
+    try {
+      await api.delete("/auth/profile");
+      await logout();
+    } catch (error) {
+      console.error("Delete account error:", error);
       throw error;
     }
   };
@@ -94,6 +143,10 @@ export const AuthProvider = ({ children }) => {
       staffLogin,
       logout,
       isAuthenticated,
+      completeProfile,
+      updateProfile,
+      getProfile,
+      deleteAccount,
     }),
     [user, loading, isAuthenticated]
   );

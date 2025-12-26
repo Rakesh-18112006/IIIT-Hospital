@@ -1,26 +1,31 @@
-import { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
-import { useAuth } from '../context/AuthContext';
-import { Activity, Mail, Lock, LogIn } from 'lucide-react';
+import { useState } from "react";
+import { useNavigate } from "react-router-dom";
+import { useAuth } from "../context/AuthContext";
+import { Activity, Mail, Lock, LogIn } from "lucide-react";
 
 const Login = () => {
   const [isStudentLogin, setIsStudentLogin] = useState(true);
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
-  const [error, setError] = useState('');
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
-  
+
   const { googleSignIn, staffLogin } = useAuth();
   const navigate = useNavigate();
 
   const handleGoogleLogin = async () => {
     setLoading(true);
-    setError('');
+    setError("");
     try {
-      const user = await googleSignIn();
-      navigate('/student');
+      const result = await googleSignIn();
+      // Check if profile is complete
+      if (!result.profileCompleted) {
+        navigate("/complete-profile");
+      } else {
+        navigate("/student");
+      }
     } catch (err) {
-      setError(err.response?.data?.message || 'Failed to sign in with Google');
+      setError(err.response?.data?.message || "Failed to sign in with Google");
     } finally {
       setLoading(false);
     }
@@ -29,20 +34,20 @@ const Login = () => {
   const handleStaffLogin = async (e) => {
     e.preventDefault();
     setLoading(true);
-    setError('');
-    
+    setError("");
+
     try {
       const user = await staffLogin(email, password);
-      
+
       // Redirect based on role
       const routes = {
-        doctor: '/doctor',
-        hospital_admin: '/admin',
-        mess_admin: '/mess'
+        doctor: "/doctor",
+        hospital_admin: "/admin",
+        mess_admin: "/mess",
       };
-      navigate(routes[user.role] || '/');
+      navigate(routes[user.role] || "/");
     } catch (err) {
-      setError(err.response?.data?.message || 'Invalid credentials');
+      setError(err.response?.data?.message || "Invalid credentials");
     } finally {
       setLoading(false);
     }
@@ -57,7 +62,9 @@ const Login = () => {
             <Activity className="h-8 w-8 text-white" />
           </div>
           <h1 className="text-3xl font-bold text-sky-600">IIIT Health</h1>
-          <p className="text-gray-500 mt-2">Smart University Healthcare System</p>
+          <p className="text-gray-500 mt-2">
+            Smart University Healthcare System
+          </p>
         </div>
 
         {/* Login Card */}
@@ -67,9 +74,9 @@ const Login = () => {
             <button
               onClick={() => setIsStudentLogin(true)}
               className={`flex-1 py-2 px-4 rounded-md text-sm font-medium transition-all ${
-                isStudentLogin 
-                  ? 'bg-white text-sky-600 shadow-sm' 
-                  : 'text-gray-500 hover:text-sky-600'
+                isStudentLogin
+                  ? "bg-white text-sky-600 shadow-sm"
+                  : "text-gray-500 hover:text-sky-600"
               }`}
             >
               Student
@@ -77,9 +84,9 @@ const Login = () => {
             <button
               onClick={() => setIsStudentLogin(false)}
               className={`flex-1 py-2 px-4 rounded-md text-sm font-medium transition-all ${
-                !isStudentLogin 
-                  ? 'bg-white text-sky-600 shadow-sm' 
-                  : 'text-gray-500 hover:text-sky-600'
+                !isStudentLogin
+                  ? "bg-white text-sky-600 shadow-sm"
+                  : "text-gray-500 hover:text-sky-600"
               }`}
             >
               Staff
@@ -122,7 +129,7 @@ const Login = () => {
                   />
                 </svg>
                 <span className="text-gray-700 font-medium">
-                  {loading ? 'Signing in...' : 'Continue with Google'}
+                  {loading ? "Signing in..." : "Continue with Google"}
                 </span>
               </button>
             </div>
@@ -145,7 +152,7 @@ const Login = () => {
                   />
                 </div>
               </div>
-              
+
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">
                   Password
@@ -169,12 +176,14 @@ const Login = () => {
                 className="w-full flex items-center justify-center gap-2 bg-sky-500 text-white py-3 rounded-lg hover:bg-sky-600 transition-colors disabled:opacity-50 font-medium"
               >
                 <LogIn className="h-5 w-5" />
-                {loading ? 'Signing in...' : 'Sign In'}
+                {loading ? "Signing in..." : "Sign In"}
               </button>
 
               <div className="mt-4 text-center text-sm text-gray-500">
                 <p>Demo Credentials:</p>
-                <p className="text-xs mt-1">Doctor: doctor@iiit.ac.in / password123</p>
+                <p className="text-xs mt-1">
+                  Doctor: doctor@iiit.ac.in / password123
+                </p>
                 <p className="text-xs">Admin: admin@iiit.ac.in / password123</p>
                 <p className="text-xs">Mess: mess@iiit.ac.in / password123</p>
               </div>

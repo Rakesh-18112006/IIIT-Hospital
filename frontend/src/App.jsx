@@ -1,11 +1,21 @@
-import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
-import { AuthProvider } from './context/AuthContext';
-import { ProtectedRoute, PublicRoute } from './components/ProtectedRoute';
-import Login from './pages/Login';
-import StudentDashboard from './pages/StudentDashboard';
-import DoctorDashboard from './pages/DoctorDashboard';
-import AdminDashboard from './pages/AdminDashboard';
-import MessDashboard from './pages/MessDashboard';
+import {
+  BrowserRouter as Router,
+  Routes,
+  Route,
+  Navigate,
+} from "react-router-dom";
+import { AuthProvider } from "./context/AuthContext";
+import {
+  ProtectedRoute,
+  PublicRoute,
+  ProfileCompletionRoute,
+} from "./components/ProtectedRoute";
+import Login from "./pages/Login";
+import CompleteProfile from "./pages/CompleteProfile";
+import StudentDashboard from "./pages/StudentDashboard";
+import DoctorDashboard from "./pages/DoctorDashboard";
+import AdminDashboard from "./pages/AdminDashboard";
+import MessDashboard from "./pages/MessDashboard";
 
 function App() {
   return (
@@ -13,55 +23,65 @@ function App() {
       <Router>
         <Routes>
           {/* Public Routes */}
-          <Route 
-            path="/login" 
+          <Route
+            path="/login"
             element={
               <PublicRoute>
                 <Login />
               </PublicRoute>
-            } 
+            }
           />
-          
-          {/* Student Dashboard */}
-          <Route 
-            path="/student" 
+
+          {/* Complete Profile Route - for students who need to complete profile */}
+          <Route
+            path="/complete-profile"
             element={
-              <ProtectedRoute allowedRoles={['student']}>
+              <ProfileCompletionRoute>
+                <CompleteProfile />
+              </ProfileCompletionRoute>
+            }
+          />
+
+          {/* Student Dashboard */}
+          <Route
+            path="/student"
+            element={
+              <ProtectedRoute allowedRoles={["student"]}>
                 <StudentDashboard />
               </ProtectedRoute>
-            } 
+            }
           />
-          
+
           {/* Doctor Dashboard */}
-          <Route 
-            path="/doctor" 
+          <Route
+            path="/doctor"
             element={
-              <ProtectedRoute allowedRoles={['doctor']}>
+              <ProtectedRoute allowedRoles={["doctor"]}>
                 <DoctorDashboard />
               </ProtectedRoute>
-            } 
+            }
           />
-          
+
           {/* Hospital Admin Dashboard */}
-          <Route 
-            path="/admin" 
+          <Route
+            path="/admin"
             element={
-              <ProtectedRoute allowedRoles={['hospital_admin']}>
+              <ProtectedRoute allowedRoles={["hospital_admin"]}>
                 <AdminDashboard />
               </ProtectedRoute>
-            } 
+            }
           />
-          
+
           {/* Mess Admin Dashboard */}
-          <Route 
-            path="/mess" 
+          <Route
+            path="/mess"
             element={
-              <ProtectedRoute allowedRoles={['mess_admin']}>
+              <ProtectedRoute allowedRoles={["mess_admin"]}>
                 <MessDashboard />
               </ProtectedRoute>
-            } 
+            }
           />
-          
+
           {/* Default redirect */}
           <Route path="/" element={<Navigate to="/login" replace />} />
           <Route path="*" element={<Navigate to="/login" replace />} />
