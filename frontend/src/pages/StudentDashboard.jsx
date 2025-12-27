@@ -222,9 +222,10 @@ const StudentDashboard = () => {
   };
 
   const findDocumentByName = (name) => {
-    return documents.find(doc => 
-      doc.originalName.toLowerCase().includes(name.toLowerCase()) ||
-      name.toLowerCase().includes(doc.originalName.toLowerCase())
+    return documents.find(
+      (doc) =>
+        doc.originalName.toLowerCase().includes(name.toLowerCase()) ||
+        name.toLowerCase().includes(doc.originalName.toLowerCase())
     );
   };
 
@@ -245,16 +246,18 @@ const StudentDashboard = () => {
         question: userMessage,
       });
       const assistantMessage = response.data.answer;
-      const sourceName = response.data.source && response.data.source !== "Not found in documents" 
-        ? response.data.source 
-        : null;
-      
+      const sourceName =
+        response.data.source &&
+        response.data.source !== "Not found in documents"
+          ? response.data.source
+          : null;
+
       setChatMessages((prev) => [
         ...prev,
-        { 
-          role: "assistant", 
+        {
+          role: "assistant",
           content: assistantMessage,
-          source: sourceName
+          source: sourceName,
         },
       ]);
     } catch (error) {
@@ -1217,7 +1220,9 @@ const StudentDashboard = () => {
                                     <Eye className="h-4 w-4" />
                                   </button>
                                   <button
-                                    onClick={() => handleDeleteDocument(doc._id)}
+                                    onClick={() =>
+                                      handleDeleteDocument(doc._id)
+                                    }
                                     className="p-2 text-red-500 hover:bg-red-50 rounded-lg transition-colors"
                                     title="Delete Document"
                                   >
@@ -1278,7 +1283,9 @@ const StudentDashboard = () => {
                                     <span>Source: {msg.source}</span>
                                     <button
                                       onClick={() => {
-                                        const doc = findDocumentByName(msg.source);
+                                        const doc = findDocumentByName(
+                                          msg.source
+                                        );
                                         if (doc) handleViewDocument(doc._id);
                                       }}
                                       className="ml-1 px-2 py-0.5 bg-sky-100 text-sky-600 rounded hover:bg-sky-200 transition-colors flex items-center gap-1"
@@ -1359,9 +1366,14 @@ const StudentDashboard = () => {
                               <FileText className="h-5 w-5 text-sky-600" />
                             </div>
                             <div>
-                              <h3 className="font-semibold text-gray-800">{viewingDocument.originalName}</h3>
+                              <h3 className="font-semibold text-gray-800">
+                                {viewingDocument.originalName}
+                              </h3>
                               <p className="text-xs text-gray-500">
-                                Uploaded: {new Date(viewingDocument.uploadDate).toLocaleDateString()}
+                                Uploaded:{" "}
+                                {new Date(
+                                  viewingDocument.uploadDate
+                                ).toLocaleDateString()}
                               </p>
                             </div>
                           </div>
@@ -1376,10 +1388,17 @@ const StudentDashboard = () => {
                         {/* Modal Content */}
                         <div className="flex-1 overflow-y-auto p-4 space-y-4">
                           {/* Document Image */}
-                          {viewingDocument.mimeType?.startsWith('image/') && (
+                          {viewingDocument.mimeType?.startsWith("image/") && (
                             <div className="bg-gray-100 rounded-lg p-4 flex items-center justify-center">
-                              <img 
-                                src={`${import.meta.env.VITE_API_URL?.replace('/api', '') || 'http://localhost:5000'}/uploads/medical-documents/${viewingDocument.filename}`}
+                              <img
+                                src={`${
+                                  import.meta.env.VITE_API_URL?.replace(
+                                    "/api",
+                                    ""
+                                  ) || "http://localhost:5000"
+                                }/uploads/medical-documents/${
+                                  viewingDocument.filename
+                                }`}
                                 alt={viewingDocument.originalName}
                                 className="max-w-full max-h-[300px] object-contain rounded"
                               />
@@ -1389,95 +1408,173 @@ const StudentDashboard = () => {
                           {/* Analyzed Data */}
                           {viewingDocument.analyzedData && (
                             <div className="space-y-4">
-                              <h4 className="font-semibold text-gray-800">Extracted Information</h4>
-                              
+                              <h4 className="font-semibold text-gray-800">
+                                Extracted Information
+                              </h4>
+
                               <div className="grid grid-cols-2 gap-3">
                                 {viewingDocument.analyzedData.documentType && (
                                   <div className="bg-gray-50 p-3 rounded-lg">
-                                    <p className="text-xs text-gray-500">Document Type</p>
-                                    <p className="font-medium text-gray-800">{viewingDocument.analyzedData.documentType}</p>
+                                    <p className="text-xs text-gray-500">
+                                      Document Type
+                                    </p>
+                                    <p className="font-medium text-gray-800">
+                                      {
+                                        viewingDocument.analyzedData
+                                          .documentType
+                                      }
+                                    </p>
                                   </div>
                                 )}
                                 {viewingDocument.analyzedData.bloodGroup && (
                                   <div className="bg-red-50 p-3 rounded-lg">
-                                    <p className="text-xs text-red-600">Blood Group</p>
-                                    <p className="font-bold text-red-700 text-lg">{viewingDocument.analyzedData.bloodGroup}</p>
+                                    <p className="text-xs text-red-600">
+                                      Blood Group
+                                    </p>
+                                    <p className="font-bold text-red-700 text-lg">
+                                      {viewingDocument.analyzedData.bloodGroup}
+                                    </p>
                                   </div>
                                 )}
                                 {viewingDocument.analyzedData.hospitalName && (
                                   <div className="bg-gray-50 p-3 rounded-lg">
-                                    <p className="text-xs text-gray-500">Hospital</p>
-                                    <p className="font-medium text-gray-800">{viewingDocument.analyzedData.hospitalName}</p>
+                                    <p className="text-xs text-gray-500">
+                                      Hospital
+                                    </p>
+                                    <p className="font-medium text-gray-800">
+                                      {
+                                        viewingDocument.analyzedData
+                                          .hospitalName
+                                      }
+                                    </p>
                                   </div>
                                 )}
                                 {viewingDocument.analyzedData.doctorName && (
                                   <div className="bg-gray-50 p-3 rounded-lg">
-                                    <p className="text-xs text-gray-500">Doctor</p>
-                                    <p className="font-medium text-gray-800">{viewingDocument.analyzedData.doctorName}</p>
+                                    <p className="text-xs text-gray-500">
+                                      Doctor
+                                    </p>
+                                    <p className="font-medium text-gray-800">
+                                      {viewingDocument.analyzedData.doctorName}
+                                    </p>
                                   </div>
                                 )}
                               </div>
 
                               {viewingDocument.analyzedData.summary && (
                                 <div className="bg-sky-50 p-3 rounded-lg">
-                                  <p className="text-xs text-sky-600 mb-1">Summary</p>
-                                  <p className="text-sm text-gray-700">{viewingDocument.analyzedData.summary}</p>
+                                  <p className="text-xs text-sky-600 mb-1">
+                                    Summary
+                                  </p>
+                                  <p className="text-sm text-gray-700">
+                                    {viewingDocument.analyzedData.summary}
+                                  </p>
                                 </div>
                               )}
 
-                              {viewingDocument.analyzedData.conditions?.length > 0 && (
+                              {viewingDocument.analyzedData.conditions?.length >
+                                0 && (
                                 <div>
-                                  <p className="text-xs text-gray-500 mb-2">Conditions</p>
+                                  <p className="text-xs text-gray-500 mb-2">
+                                    Conditions
+                                  </p>
                                   <div className="flex flex-wrap gap-2">
-                                    {viewingDocument.analyzedData.conditions.map((c, i) => (
-                                      <span key={i} className="px-2 py-1 bg-purple-100 text-purple-700 rounded text-sm">{c}</span>
-                                    ))}
+                                    {viewingDocument.analyzedData.conditions.map(
+                                      (c, i) => (
+                                        <span
+                                          key={i}
+                                          className="px-2 py-1 bg-purple-100 text-purple-700 rounded text-sm"
+                                        >
+                                          {c}
+                                        </span>
+                                      )
+                                    )}
                                   </div>
                                 </div>
                               )}
 
-                              {viewingDocument.analyzedData.medications?.length > 0 && (
+                              {viewingDocument.analyzedData.medications
+                                ?.length > 0 && (
                                 <div>
-                                  <p className="text-xs text-gray-500 mb-2">Medications</p>
+                                  <p className="text-xs text-gray-500 mb-2">
+                                    Medications
+                                  </p>
                                   <div className="flex flex-wrap gap-2">
-                                    {viewingDocument.analyzedData.medications.map((m, i) => (
-                                      <span key={i} className="px-2 py-1 bg-green-100 text-green-700 rounded text-sm">{m}</span>
-                                    ))}
+                                    {viewingDocument.analyzedData.medications.map(
+                                      (m, i) => (
+                                        <span
+                                          key={i}
+                                          className="px-2 py-1 bg-green-100 text-green-700 rounded text-sm"
+                                        >
+                                          {m}
+                                        </span>
+                                      )
+                                    )}
                                   </div>
                                 </div>
                               )}
 
-                              {viewingDocument.analyzedData.allergies?.length > 0 && (
+                              {viewingDocument.analyzedData.allergies?.length >
+                                0 && (
                                 <div>
-                                  <p className="text-xs text-gray-500 mb-2">Allergies</p>
+                                  <p className="text-xs text-gray-500 mb-2">
+                                    Allergies
+                                  </p>
                                   <div className="flex flex-wrap gap-2">
-                                    {viewingDocument.analyzedData.allergies.map((a, i) => (
-                                      <span key={i} className="px-2 py-1 bg-orange-100 text-orange-700 rounded text-sm">{a}</span>
-                                    ))}
+                                    {viewingDocument.analyzedData.allergies.map(
+                                      (a, i) => (
+                                        <span
+                                          key={i}
+                                          className="px-2 py-1 bg-orange-100 text-orange-700 rounded text-sm"
+                                        >
+                                          {a}
+                                        </span>
+                                      )
+                                    )}
                                   </div>
                                 </div>
                               )}
 
-                              {viewingDocument.analyzedData.testResults?.length > 0 && (
+                              {viewingDocument.analyzedData.testResults
+                                ?.length > 0 && (
                                 <div>
-                                  <p className="text-xs text-gray-500 mb-2">Test Results</p>
+                                  <p className="text-xs text-gray-500 mb-2">
+                                    Test Results
+                                  </p>
                                   <div className="bg-gray-50 rounded-lg overflow-hidden">
                                     <table className="w-full text-sm">
                                       <thead className="bg-gray-100">
                                         <tr>
-                                          <th className="px-3 py-2 text-left text-gray-600">Test</th>
-                                          <th className="px-3 py-2 text-left text-gray-600">Value</th>
-                                          <th className="px-3 py-2 text-left text-gray-600">Unit</th>
+                                          <th className="px-3 py-2 text-left text-gray-600">
+                                            Test
+                                          </th>
+                                          <th className="px-3 py-2 text-left text-gray-600">
+                                            Value
+                                          </th>
+                                          <th className="px-3 py-2 text-left text-gray-600">
+                                            Unit
+                                          </th>
                                         </tr>
                                       </thead>
                                       <tbody>
-                                        {viewingDocument.analyzedData.testResults.map((t, i) => (
-                                          <tr key={i} className="border-t border-gray-100">
-                                            <td className="px-3 py-2">{t.testName}</td>
-                                            <td className="px-3 py-2 font-medium">{t.value}</td>
-                                            <td className="px-3 py-2 text-gray-500">{t.unit || '-'}</td>
-                                          </tr>
-                                        ))}
+                                        {viewingDocument.analyzedData.testResults.map(
+                                          (t, i) => (
+                                            <tr
+                                              key={i}
+                                              className="border-t border-gray-100"
+                                            >
+                                              <td className="px-3 py-2">
+                                                {t.testName}
+                                              </td>
+                                              <td className="px-3 py-2 font-medium">
+                                                {t.value}
+                                              </td>
+                                              <td className="px-3 py-2 text-gray-500">
+                                                {t.unit || "-"}
+                                              </td>
+                                            </tr>
+                                          )
+                                        )}
                                       </tbody>
                                     </table>
                                   </div>
@@ -1489,7 +1586,9 @@ const StudentDashboard = () => {
                           {/* Extracted Text */}
                           {viewingDocument.extractedText && (
                             <div>
-                              <p className="text-xs text-gray-500 mb-2">Extracted Text (OCR)</p>
+                              <p className="text-xs text-gray-500 mb-2">
+                                Extracted Text (OCR)
+                              </p>
                               <div className="bg-gray-50 p-3 rounded-lg max-h-[200px] overflow-y-auto">
                                 <pre className="text-xs text-gray-600 whitespace-pre-wrap font-mono">
                                   {viewingDocument.extractedText}
