@@ -165,16 +165,16 @@ appointmentSchema.statics.getAvailableSlots = async function (doctorId, date) {
 
   const bookedSlots = bookedAppointments.map((apt) => apt.slotTime);
 
-  // Generate all 15-minute slots for working hours (9 AM - 9 PM)
+  // Generate all 10-minute slots for working hours (24 hours)
   const allSlots = [];
-  for (let hour = 9; hour < 21; hour++) {
-    for (let minute = 0; minute < 60; minute += 15) {
+  for (let hour = 0; hour < 24; hour++) {
+    for (let minute = 0; minute < 60; minute += 10) {
       const slotTime = `${hour.toString().padStart(2, "0")}:${minute
         .toString()
         .padStart(2, "0")}`;
       if (!bookedSlots.includes(slotTime)) {
-        const endHour = minute === 45 ? hour + 1 : hour;
-        const endMinute = (minute + 15) % 60;
+        const endHour = minute >= 50 ? hour + 1 : hour;
+        const endMinute = (minute + 10) % 60;
         const slotEndTime = `${endHour.toString().padStart(2, "0")}:${endMinute
           .toString()
           .padStart(2, "0")}`;

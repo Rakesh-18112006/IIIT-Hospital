@@ -6,6 +6,7 @@ import {
   reorderQueueByPriority,
   assignOptimalSlot,
 } from "../utils/appointmentPriority.js";
+import { sendRescheduleEmail } from "../utils/emailService.js";
 
 /**
  * Get all doctors
@@ -470,10 +471,10 @@ export const rescheduleAppointment = async (req, res) => {
     const oldSlotEndTime = appointment.slotEndTime;
     const today = appointment.slotDate;
 
-    // Calculate new end time (15 minutes after start)
+    // Calculate new end time (10 minutes after start)
     const [newHour, newMinute] = newSlotTime.split(":").map(Number);
-    const newEndHour = newMinute === 45 ? newHour + 1 : newHour;
-    const newEndMinute = (newMinute + 15) % 60;
+    const newEndHour = newMinute >= 50 ? newHour + 1 : newHour;
+    const newEndMinute = (newMinute + 10) % 60;
     const newSlotEndTime = `${newEndHour
       .toString()
       .padStart(2, "0")}:${newEndMinute.toString().padStart(2, "0")}`;
@@ -503,6 +504,33 @@ export const rescheduleAppointment = async (req, res) => {
 
     await appointment.save();
 
+    // Send email notification to student about reschedule
+    try {
+      const doctor = await User.findById(doctorId);
+      const student = await User.findById(appointment.student);
+      
+      if (student && student.email && doctor) {
+        const slotDateFormatted = new Date(appointment.slotDate).toLocaleDateString(
+          "en-IN",
+          { year: "numeric", month: "long", day: "numeric" }
+        );
+        
+        await sendRescheduleEmail(
+          student.email,
+          student.name,
+          doctor.name,
+          oldSlotTime,
+          newSlotTime,
+          newSlotEndTime,
+          appointment.slotDate,
+          reason || "Doctor's request"
+        );
+      }
+    } catch (emailError) {
+      console.error("Failed to send reschedule email:", emailError);
+      // Don't fail the reschedule operation if email fails
+    }
+
     // Find all appointments that need to shift forward
     // These are all appointments from the ORIGINAL slot time onwards (excluding completed/cancelled)
     const appointmentsToShift = await Appointment.find({
@@ -515,31 +543,31 @@ export const rescheduleAppointment = async (req, res) => {
 
     let shiftedCount = 0;
 
-    // Shift each appointment forward by 15 minutes
+    // Shift each appointment forward by 10 minutes
     for (const apt of appointmentsToShift) {
       const aptOldTime = apt.slotTime;
       const aptOldEndTime = apt.slotEndTime;
 
-      // Calculate new time (shift forward by 15 minutes)
+      // Calculate new time (shift forward by 10 minutes)
       const [h, m] = aptOldTime.split(":").map(Number);
-      let nextMinute = m + 15;
+      let nextMinute = m + 10;
       let nextHour = h;
       if (nextMinute >= 60) {
         nextMinute = nextMinute - 60;
         nextHour = h + 1;
       }
 
-      // Check if new time exceeds working hours (9 PM = 21:00)
-      if (nextHour >= 21) {
-        // Cannot shift beyond working hours
+      // Check if new time exceeds 24 hours
+      if (nextHour >= 24) {
+        // Cannot shift beyond 24 hours
         continue;
       }
 
       const shiftedSlotTime = `${nextHour
         .toString()
         .padStart(2, "0")}:${nextMinute.toString().padStart(2, "0")}`;
-      const shiftedEndHour = nextMinute === 45 ? nextHour + 1 : nextHour;
-      const shiftedEndMinute = (nextMinute + 15) % 60;
+      const shiftedEndHour = nextMinute >= 50 ? nextHour + 1 : nextHour;
+      const shiftedEndMinute = (nextMinute + 10) % 60;
       const shiftedSlotEndTime = `${shiftedEndHour
         .toString()
         .padStart(2, "0")}:${shiftedEndMinute.toString().padStart(2, "0")}`;
