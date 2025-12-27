@@ -10,6 +10,7 @@ import {
   updateAppointmentStatus,
   updateAppointmentPriority,
   rescheduleAppointment,
+  savePrescription,
   getNotifications,
   markNotificationRead,
   clearNotification,
@@ -71,6 +72,13 @@ router.put(
   "/doctor/:id/priority",
   authorize("doctor"),
   updateAppointmentPriority
+);
+
+// Save prescription and create medical document
+router.post(
+  "/doctor/:id/save-prescription",
+  authorize("doctor"),
+  savePrescription
 );
 
 // ===== Admin Routes =====

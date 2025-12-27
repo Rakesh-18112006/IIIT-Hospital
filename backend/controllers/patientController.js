@@ -502,3 +502,78 @@ export const scanQRCode = async (req, res) => {
     res.status(500).json({ message: error.message || 'Failed to scan QR code' });
   }
 };
+
+// @desc    Get student's notifications
+// @route   GET /api/patient/notifications
+// @access  Private (Student)
+export const getNotifications = async (req, res) => {
+  try {
+    const student = await User.findById(req.user._id).select('notifications');
+    
+    if (!student) {
+      return res.status(404).json({ message: 'Student not found' });
+    }
+
+    const notifications = student.notifications || [];
+    const unreadCount = notifications.filter(n => !n.read).length;
+
+    res.json({
+      notifications: notifications.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt)),
+      unreadCount,
+      total: notifications.length
+    });
+  } catch (error) {
+    console.error('Error fetching notifications:', error);
+    res.status(500).json({ message: 'Error fetching notifications' });
+  }
+};
+
+// @desc    Mark notification as read
+// @route   PUT /api/patient/notifications/:id/read
+// @access  Private (Student)
+export const markNotificationAsRead = async (req, res) => {
+  try {
+    const student = await User.findById(req.user._id);
+
+    if (!student) {
+      return res.status(404).json({ message: 'Student not found' });
+    }
+
+    const notification = student.notifications.find(
+      n => n._id.toString() === req.params.id
+    );
+
+    if (!notification) {
+      return res.status(404).json({ message: 'Notification not found' });
+    }
+
+    notification.read = true;
+    await student.save();
+
+    res.json({ message: 'Notification marked as read', notification });
+  } catch (error) {
+    console.error('Error marking notification as read:', error);
+    res.status(500).json({ message: 'Error updating notification' });
+  }
+};
+
+// @desc    Clear/delete all notifications
+// @route   DELETE /api/patient/notifications/clear
+// @access  Private (Student)
+export const clearAllNotifications = async (req, res) => {
+  try {
+    const student = await User.findById(req.user._id);
+
+    if (!student) {
+      return res.status(404).json({ message: 'Student not found' });
+    }
+
+    student.notifications = [];
+    await student.save();
+
+    res.json({ message: 'All notifications cleared' });
+  } catch (error) {
+    console.error('Error clearing notifications:', error);
+    res.status(500).json({ message: 'Error clearing notifications' });
+  }
+};

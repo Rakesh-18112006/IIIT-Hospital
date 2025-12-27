@@ -75,6 +75,25 @@ const userSchema = new mongoose.Schema(
       type: Boolean,
       default: false,
     },
+    notifications: [
+      {
+        type: {
+          type: String,
+          enum: ["appointment", "medical_report", "new_medical_report", "prescription", "leave", "diet"],
+        },
+        title: String,
+        message: String,
+        data: mongoose.Schema.Types.Mixed,
+        read: {
+          type: Boolean,
+          default: false,
+        },
+        createdAt: {
+          type: Date,
+          default: Date.now,
+        },
+      },
+    ],
   },
   {
     timestamps: true,

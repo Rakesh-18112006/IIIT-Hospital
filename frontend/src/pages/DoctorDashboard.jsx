@@ -94,6 +94,12 @@ const DoctorDashboard = () => {
   const [qrScannerInstance, setQrScannerInstance] = useState(null);
   const [scanMode, setScanMode] = useState("camera"); // 'camera' or 'upload'
 
+  // Consultation/Prescription states
+  const [showQRScannerForConsultation, setShowQRScannerForConsultation] = useState(false);
+  const [patientQRScanned, setPatientQRScanned] = useState(false);
+  const [scannedPatientData, setScannedPatientData] = useState(null);
+  const [prescriptionSaving, setPrescriptionSaving] = useState(false);
+
   useEffect(() => {
     fetchQueue();
     fetchAppointmentQueue();
@@ -209,6 +215,39 @@ const DoctorDashboard = () => {
       );
     } finally {
       setRescheduleLoading(false);
+    }
+  };
+
+  const handleSavePrescription = async () => {
+    if (!selectedAppointment || !prescription.trim()) {
+      alert("Please enter a prescription");
+      return;
+    }
+
+    setPrescriptionSaving(true);
+    try {
+      const response = await api.post(
+        `/appointments/doctor/${selectedAppointment._id}/save-prescription`,
+        {
+          notes: notes,
+          prescription: prescription,
+          advice: advice,
+        }
+      );
+
+      alert("Prescription saved successfully! Email sent to student.");
+      fetchAppointmentQueue();
+      setSelectedAppointment(null);
+      setNotes("");
+      setPrescription("");
+      setAdvice("");
+      setPatientQRScanned(false);
+      setScannedPatientData(null);
+    } catch (error) {
+      console.error("Error saving prescription:", error);
+      alert(error.response?.data?.message || "Failed to save prescription");
+    } finally {
+      setPrescriptionSaving(false);
     }
   };
 
@@ -354,6 +393,81 @@ const DoctorDashboard = () => {
     }
   };
 
+  // Handle QR Code scanning for consultation
+  const handleQRCodeInputForConsultation = async (qrData) => {
+    if (!qrData) {
+      setQrScanError("No QR code data detected. Please try again.");
+      return;
+    }
+
+    setQrScannerLoading(true);
+    setQrScanError("");
+
+    try {
+      let dataToSend = qrData;
+
+      if (typeof qrData === "object" && qrData !== null && qrData.data) {
+        dataToSend = qrData.data;
+      }
+
+      dataToSend =
+        typeof dataToSend === "string"
+          ? dataToSend.trim()
+          : JSON.stringify(dataToSend);
+
+      console.log("📱 Consultation QR Data:", dataToSend.substring(0, 100));
+
+      try {
+        const parsedData = JSON.parse(dataToSend);
+
+        if (!parsedData.userId || !parsedData.studentId || !parsedData.token) {
+          throw new Error(
+            "Missing required fields: userId, studentId, or token"
+          );
+        }
+      } catch (parseErr) {
+        console.error("❌ QR Data Parse Error:", parseErr.message);
+        setQrScanError(`Invalid QR code format: ${parseErr.message}`);
+        setQrScannerLoading(false);
+        return;
+      }
+
+      const response = await api.post("/patient/scan-qr", {
+        qrData: dataToSend,
+      });
+
+      console.log("✅ Consultation QR Scan Success:", response.data);
+      setScannedPatientData(response.data);
+      setPatientQRScanned(true);
+      setShowQRScannerForConsultation(false);
+      setScanMode("camera");
+    } catch (error) {
+      console.error("❌ Error scanning QR code for consultation:", error);
+
+      let errorMessage = "Failed to scan QR code. Please try again.";
+
+      if (error.response?.status === 400) {
+        errorMessage =
+          error.response?.data?.message ||
+          "Invalid QR code format. Make sure you're scanning a valid QR code.";
+      } else if (error.response?.status === 404) {
+        errorMessage =
+          error.response?.data?.message ||
+          "Student not found. The QR code may be invalid or expired.";
+      } else if (error.response?.status === 403) {
+        errorMessage = "Only doctors can scan QR codes.";
+      } else if (error.message === "Network Error") {
+        errorMessage = "Network error. Please check your connection and try again.";
+      }
+
+      setQrScanError(errorMessage);
+      setScannedPatientData(null);
+      setPatientQRScanned(false);
+    } finally {
+      setQrScannerLoading(false);
+    }
+  };
+
   // Start camera scanner
   const startCameraScanner = async () => {
     try {
@@ -370,7 +484,12 @@ const DoctorDashboard = () => {
               qrScannerInstance.stop();
               setQrScannerInstance(null);
             }
-            await handleQRCodeInput(qrData);
+            // Check if this is for consultation or general QR scanning
+            if (showQRScannerForConsultation) {
+              await handleQRCodeInputForConsultation(qrData);
+            } else {
+              await handleQRCodeInput(qrData);
+            }
           } catch (err) {
             console.error("Error processing QR:", err);
           }
@@ -1136,33 +1255,125 @@ const DoctorDashboard = () => {
                           </div>
                         </div>
 
-                        {/* Doctor Notes */}
-                        <div>
-                          <label className="font-semibold text-gray-800 block mb-2">
-                            Doctor's Notes
-                          </label>
-                          <textarea
-                            value={notes}
-                            onChange={(e) => setNotes(e.target.value)}
-                            rows={3}
-                            className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-sky-500"
-                            placeholder="Add consultation notes..."
-                          />
-                        </div>
+                        {/* QR Code Scan Section - Only for Consultation */}
+                        {selectedAppointment.status === "in-progress" && !patientQRScanned && (
+                          <div className="bg-orange-50 rounded-lg p-4 border border-orange-200">
+                            <h3 className="font-semibold text-orange-900 mb-3 flex items-center gap-2">
+                              <Hash className="h-5 w-5" />
+                              Scan Patient QR Code to Access Consultation
+                            </h3>
+                            <p className="text-sm text-orange-800 mb-4">
+                              Please scan the patient's QR code to unlock the prescription and consultation notes section.
+                            </p>
+                            <div className="flex gap-2">
+                              <button
+                                onClick={() => setShowQRScannerForConsultation(true)}
+                                className="flex-1 px-4 py-2 bg-orange-500 text-white rounded-lg hover:bg-orange-600 flex items-center justify-center gap-2"
+                              >
+                                <Camera className="h-4 w-4" />
+                                Scan QR Code
+                              </button>
+                            </div>
+                          </div>
+                        )}
 
-                        {/* Prescription */}
-                        <div>
-                          <label className="font-semibold text-gray-800 block mb-2">
-                            Prescription
-                          </label>
-                          <textarea
-                            value={prescription}
-                            onChange={(e) => setPrescription(e.target.value)}
-                            rows={3}
-                            className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-sky-500"
-                            placeholder="Add prescription..."
-                          />
-                        </div>
+                        {/* Doctor Notes and Prescription - Only visible after QR scan */}
+                        {(selectedAppointment.status !== "in-progress" || patientQRScanned) && (
+                          <>
+                            {patientQRScanned && scannedPatientData && (
+                              <div className="space-y-4">
+                                <div className="bg-green-50 rounded-lg p-4 border border-green-200">
+                                  <p className="text-sm text-green-900 flex items-center gap-2">
+                                    <CheckCircle className="h-5 w-5 text-green-600" />
+                                    <strong>QR Code Verified:</strong> {scannedPatientData.student?.name}
+                                  </p>
+                                </div>
+
+                                {/* Medical Records from QR Scan */}
+                                {scannedPatientData.medicalRecords && scannedPatientData.medicalRecords.length > 0 && (
+                                  <div className="bg-blue-50 rounded-lg border border-blue-200 overflow-hidden">
+                                    <div className="bg-blue-100 px-4 py-2 border-b border-blue-200">
+                                      <h4 className="font-semibold text-blue-900 flex items-center gap-2 text-sm">
+                                        <FileText className="h-4 w-4" />
+                                        Previous Medical Records ({scannedPatientData.medicalRecords.length})
+                                      </h4>
+                                    </div>
+                                    <div className="max-h-48 overflow-y-auto">
+                                      {scannedPatientData.medicalRecords.map((record, idx) => (
+                                        <div key={idx} className="px-4 py-3 border-b border-blue-100 hover:bg-blue-100 text-sm">
+                                          <div className="flex justify-between items-start">
+                                            <div className="flex-1">
+                                              <p className="font-medium text-gray-800">
+                                                {record.symptoms?.join(", ") || "General Checkup"}
+                                              </p>
+                                              {record.prescription && (
+                                                <p className="text-xs text-gray-600 mt-1">
+                                                  <strong>Rx:</strong> {record.prescription.substring(0, 60)}...
+                                                </p>
+                                              )}
+                                            </div>
+                                            <span className={`px-2 py-1 rounded text-xs font-medium whitespace-nowrap ml-2 ${
+                                              record.severity === "red" ? "bg-red-200 text-red-800" :
+                                              record.severity === "orange" ? "bg-orange-200 text-orange-800" :
+                                              "bg-green-200 text-green-800"
+                                            }`}>
+                                              {record.severity?.toUpperCase()}
+                                            </span>
+                                          </div>
+                                          <p className="text-xs text-gray-500 mt-1">
+                                            {new Date(record.createdAt).toLocaleDateString()}
+                                          </p>
+                                        </div>
+                                      ))}
+                                    </div>
+                                  </div>
+                                )}
+                              </div>
+                            )}
+
+                            {/* Doctor Notes */}
+                            <div>
+                              <label className="font-semibold text-gray-800 block mb-2">
+                                Doctor's Notes
+                              </label>
+                              <textarea
+                                value={notes}
+                                onChange={(e) => setNotes(e.target.value)}
+                                rows={3}
+                                className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-sky-500"
+                                placeholder="Add consultation notes..."
+                              />
+                            </div>
+
+                            {/* Prescription */}
+                            <div>
+                              <label className="font-semibold text-gray-800 block mb-2">
+                                Prescription
+                              </label>
+                              <textarea
+                                value={prescription}
+                                onChange={(e) => setPrescription(e.target.value)}
+                                rows={3}
+                                className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-sky-500"
+                                placeholder="Add prescription..."
+                              />
+                            </div>
+
+                            {/* Advice */}
+                            <div>
+                              <label className="font-semibold text-gray-800 block mb-2">
+                                Additional Advice
+                              </label>
+                              <textarea
+                                value={advice}
+                                onChange={(e) => setAdvice(e.target.value)}
+                                rows={2}
+                                className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-sky-500"
+                                placeholder="Add advice for patient..."
+                              />
+                            </div>
+                          </>
+                        )}
                       </div>
 
                       {/* Action Buttons */}
@@ -1199,7 +1410,26 @@ const DoctorDashboard = () => {
                               Start Consultation
                             </button>
                           )}
-                          {selectedAppointment.status === "in-progress" && (
+                          {selectedAppointment.status === "in-progress" && patientQRScanned && (
+                            <button
+                              onClick={handleSavePrescription}
+                              disabled={prescriptionSaving || !prescription.trim()}
+                              className="px-4 py-2 bg-green-500 text-white rounded-lg hover:bg-green-600 disabled:opacity-50 flex items-center gap-2"
+                            >
+                              {prescriptionSaving ? (
+                                <>
+                                  <Loader2 className="h-4 w-4 animate-spin" />
+                                  Saving...
+                                </>
+                              ) : (
+                                <>
+                                  <CheckCircle className="h-4 w-4" />
+                                  Save Prescription & Complete
+                                </>
+                              )}
+                            </button>
+                          )}
+                          {selectedAppointment.status === "in-progress" && !patientQRScanned && (
                             <button
                               onClick={() =>
                                 handleUpdateAppointmentStatus(
@@ -1211,7 +1441,7 @@ const DoctorDashboard = () => {
                               className="px-4 py-2 bg-green-500 text-white rounded-lg hover:bg-green-600 disabled:opacity-50 flex items-center gap-2"
                             >
                               <CheckCircle className="h-4 w-4" />
-                              Complete
+                              Complete Without Prescription
                             </button>
                           )}
                           {(selectedAppointment.status === "pending" ||
@@ -2244,6 +2474,182 @@ const DoctorDashboard = () => {
                     )}
                   </div>
                 )}
+              </div>
+            </div>
+          )}
+
+          {/* Consultation QR Scanner Modal */}
+          {showQRScannerForConsultation && (
+            <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+              <div className="bg-white rounded-xl shadow-xl max-w-md w-full p-6">
+                <div className="flex items-center justify-between mb-4">
+                  <h3 className="text-lg font-semibold text-gray-800">
+                    Scan Patient QR Code
+                  </h3>
+                  <button
+                    onClick={() => {
+                      setShowQRScannerForConsultation(false);
+                      if (qrScannerInstance) {
+                        qrScannerInstance.stop();
+                        setQrScannerInstance(null);
+                      }
+                      setCameraActive(false);
+                    }}
+                    className="p-1 hover:bg-gray-100 rounded"
+                  >
+                    <X className="h-5 w-5" />
+                  </button>
+                </div>
+
+                <div className="space-y-4">
+                  {/* Tab Selection */}
+                  <div className="flex gap-2">
+                    <button
+                      onClick={() => setScanMode("camera")}
+                      className={`flex-1 py-2 px-3 rounded-lg flex items-center justify-center gap-2 transition-colors ${
+                        scanMode === "camera"
+                          ? "bg-sky-500 text-white"
+                          : "bg-gray-100 text-gray-700 hover:bg-gray-200"
+                      }`}
+                    >
+                      <Camera className="h-4 w-4" />
+                      Camera
+                    </button>
+                    <button
+                      onClick={() => setScanMode("upload")}
+                      className={`flex-1 py-2 px-3 rounded-lg flex items-center justify-center gap-2 transition-colors ${
+                        scanMode === "upload"
+                          ? "bg-sky-500 text-white"
+                          : "bg-gray-100 text-gray-700 hover:bg-gray-200"
+                      }`}
+                    >
+                      <Upload className="h-4 w-4" />
+                      Upload
+                    </button>
+                  </div>
+
+                  {/* Camera Mode */}
+                  {scanMode === "camera" && (
+                    <div className="space-y-4">
+                      {!cameraActive ? (
+                        <button
+                          onClick={startCameraScanner}
+                          className="w-full py-3 bg-orange-500 text-white rounded-lg hover:bg-orange-600 flex items-center justify-center gap-2 font-medium"
+                        >
+                          <Camera className="h-5 w-5" />
+                          Start Camera
+                        </button>
+                      ) : (
+                        <>
+                          <div className="bg-black rounded-lg overflow-hidden">
+                            <video ref={setVideoRef} className="w-full h-64 object-cover" />
+                          </div>
+                          <button
+                            onClick={stopCameraScanner}
+                            className="w-full py-2 bg-red-500 text-white rounded-lg hover:bg-red-600"
+                          >
+                            Stop Camera
+                          </button>
+                        </>
+                      )}
+                    </div>
+                  )}
+
+                  {/* Upload Mode */}
+                  {scanMode === "upload" && (
+                    <div className="bg-sky-50 rounded-xl p-6 border-2 border-dashed border-sky-200">
+                      <label className="flex flex-col items-center justify-center cursor-pointer">
+                        <Upload className="h-12 w-12 text-sky-400 mb-4" />
+                        <p className="text-gray-700 font-medium mb-2">
+                          Upload QR Code Image
+                        </p>
+                        <p className="text-sm text-gray-500 mb-4">
+                          PNG, JPG, or other image formats
+                        </p>
+                        <input
+                          type="file"
+                          accept="image/*"
+                          onChange={(e) => {
+                            const file = e.target.files[0];
+                            if (file) {
+                              const reader = new FileReader();
+                              reader.onload = async (event) => {
+                                const img = new Image();
+                                img.onload = async () => {
+                                  const canvas = document.createElement("canvas");
+                                  canvas.width = img.width;
+                                  canvas.height = img.height;
+                                  const ctx = canvas.getContext("2d");
+                                  ctx.drawImage(img, 0, 0);
+
+                                  try {
+                                    const result = await QrScanner.scanImage(canvas);
+                                    await handleQRCodeInputForConsultation(result);
+                                  } catch (err) {
+                                    setQrScanError(
+                                      "Could not read QR code from image. Please try another image."
+                                    );
+                                  }
+                                };
+                                img.src = event.target.result;
+                              };
+                              reader.readAsDataURL(file);
+                            }
+                          }}
+                          disabled={qrScannerLoading}
+                          className="hidden"
+                        />
+                        <button
+                          onClick={(e) =>
+                            e.currentTarget.parentElement.querySelector(
+                              'input'
+                            ).click()
+                          }
+                          disabled={qrScannerLoading}
+                          className="inline-flex items-center gap-2 px-6 py-2.5 bg-sky-500 text-white rounded-lg hover:bg-sky-600 transition-colors disabled:opacity-50 font-medium"
+                        >
+                          {qrScannerLoading ? (
+                            <>
+                              <Loader2 className="h-4 w-4 animate-spin" />
+                              Scanning...
+                            </>
+                          ) : (
+                            <>
+                              <FileCheck className="h-4 w-4" />
+                              Select Image
+                            </>
+                          )}
+                        </button>
+                      </label>
+                    </div>
+                  )}
+
+                  {/* Error Message */}
+                  {qrScanError && (
+                    <div className="bg-red-50 border border-red-200 text-red-700 rounded-lg p-3 flex items-center gap-2">
+                      <AlertCircle className="h-5 w-5 flex-shrink-0" />
+                      <span className="text-sm">{qrScanError}</span>
+                    </div>
+                  )}
+                </div>
+
+                {/* Close Button */}
+                <div className="mt-6 flex gap-2">
+                  <button
+                    onClick={() => {
+                      setShowQRScannerForConsultation(false);
+                      if (qrScannerInstance) {
+                        qrScannerInstance.stop();
+                        setQrScannerInstance(null);
+                      }
+                      setCameraActive(false);
+                      setQrScanError("");
+                    }}
+                    className="flex-1 px-4 py-2 border border-gray-200 text-gray-700 rounded-lg hover:bg-gray-50 font-medium"
+                  >
+                    Cancel
+                  </button>
+                </div>
               </div>
             </div>
           )}

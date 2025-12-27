@@ -138,6 +138,11 @@ const StudentDashboard = () => {
   const [chatLoading, setChatLoading] = useState(false);
   const chatEndRef = useRef(null);
 
+  // Notifications state
+  const [notifications, setNotifications] = useState([]);
+  const [showNotifications, setShowNotifications] = useState(false);
+  const [unreadCount, setUnreadCount] = useState(0);
+
   // Appointment Booking state
   const [doctors, setDoctors] = useState([]);
   const [selectedDoctor, setSelectedDoctor] = useState(null);
@@ -157,10 +162,6 @@ const StudentDashboard = () => {
   const [showBookingModal, setShowBookingModal] = useState(false);
   const [bookingSuccess, setBookingSuccess] = useState(null);
   const [bookingError, setBookingError] = useState("");
-
-  // Notifications state
-  const [notifications, setNotifications] = useState([]);
-  const [showNotifications, setShowNotifications] = useState(false);
 
   // QR Code state
   const [qrCode, setQrCode] = useState(null);
@@ -222,6 +223,35 @@ const StudentDashboard = () => {
     }
   };
 
+  // Notification Functions
+  const fetchNotifications = async () => {
+    try {
+      const response = await api.get("/patient/notifications");
+      setNotifications(response.data.notifications);
+      setUnreadCount(response.data.unreadCount);
+    } catch (error) {
+      console.error("Error fetching notifications:", error);
+    }
+  };
+
+  const handleMarkNotificationAsRead = async (notificationId) => {
+    try {
+      await api.put(`/patient/notifications/${notificationId}/read`);
+      fetchNotifications();
+    } catch (error) {
+      console.error("Error marking notification as read:", error);
+    }
+  };
+
+  const handleClearAllNotifications = async () => {
+    try {
+      await api.delete("/patient/notifications/clear");
+      fetchNotifications();
+    } catch (error) {
+      console.error("Error clearing notifications:", error);
+    }
+  };
+
   // Appointment Functions
   const fetchDoctors = async () => {
     try {
@@ -256,42 +286,6 @@ const StudentDashboard = () => {
       console.error("Error fetching appointments:", error);
     } finally {
       setAppointmentsLoading(false);
-    }
-  };
-
-  const fetchNotifications = async () => {
-    try {
-      const response = await api.get("/appointments/notifications");
-      const unreadNotifications = response.data.filter(
-        (n) => !n.notification?.read
-      );
-      setNotifications(unreadNotifications);
-
-      // If there are new unread notifications and we're on the queue tab, show them
-      if (unreadNotifications.length > 0) {
-        setShowNotifications(true);
-      }
-    } catch (error) {
-      console.error("Error fetching notifications:", error);
-    }
-  };
-
-  const handleDismissNotification = async (appointmentId) => {
-    try {
-      await api.delete(`/appointments/notifications/${appointmentId}`);
-      setNotifications((prev) => prev.filter((n) => n._id !== appointmentId));
-      fetchMyAppointments(); // Refresh appointments to get updated times
-    } catch (error) {
-      console.error("Error dismissing notification:", error);
-    }
-  };
-
-  const handleMarkNotificationRead = async (appointmentId) => {
-    try {
-      await api.put(`/appointments/notifications/${appointmentId}/read`);
-      setNotifications((prev) => prev.filter((n) => n._id !== appointmentId));
-    } catch (error) {
-      console.error("Error marking notification read:", error);
     }
   };
 
@@ -926,6 +920,76 @@ const StudentDashboard = () => {
             </div>
           </div>
           <div className="flex items-center gap-3">
+            {/* Notification Bell */}
+            <div className="relative">
+              <button
+                onClick={() => setShowNotifications(!showNotifications)}
+                className="relative p-2 hover:bg-sky-50 rounded-lg text-gray-600 transition-colors"
+              >
+                <Bell className="h-5 w-5" />
+                {unreadCount > 0 && (
+                  <span className="absolute top-0 right-0 w-4 h-4 bg-red-500 text-white text-xs rounded-full flex items-center justify-center">
+                    {unreadCount > 9 ? "9+" : unreadCount}
+                  </span>
+                )}
+              </button>
+
+              {/* Notification Dropdown */}
+              {showNotifications && (
+                <div className="absolute right-0 mt-2 w-80 max-h-96 bg-white rounded-xl shadow-xl border border-sky-100 z-50 overflow-hidden flex flex-col">
+                  <div className="p-4 border-b border-sky-100 bg-sky-50 flex justify-between items-center">
+                    <h3 className="font-semibold text-gray-800">Notifications</h3>
+                    {notifications.length > 0 && (
+                      <button
+                        onClick={handleClearAllNotifications}
+                        className="text-xs px-2 py-1 text-red-600 hover:bg-red-50 rounded"
+                      >
+                        Clear All
+                      </button>
+                    )}
+                  </div>
+                  
+                  {notifications.length === 0 ? (
+                    <div className="p-8 text-center text-gray-500">
+                      <Bell className="h-8 w-8 mx-auto mb-2 opacity-50" />
+                      <p className="text-sm">No notifications yet</p>
+                    </div>
+                  ) : (
+                    <div className="overflow-y-auto flex-1">
+                      {notifications.map((notif) => (
+                        <div
+                          key={notif._id}
+                          className={`p-4 border-b border-sky-50 cursor-pointer transition-colors ${
+                            !notif.read ? "bg-sky-50 hover:bg-sky-100" : "hover:bg-gray-50"
+                          }`}
+                          onClick={() => handleMarkNotificationAsRead(notif._id)}
+                        >
+                          <div className="flex justify-between items-start gap-2">
+                            <div className="flex-1 min-w-0">
+                              <div className="flex items-center gap-2 mb-1">
+                                <h4 className="font-medium text-gray-800 text-sm">
+                                  {notif.title}
+                                </h4>
+                                {!notif.read && (
+                                  <span className="w-2 h-2 bg-blue-500 rounded-full flex-shrink-0"></span>
+                                )}
+                              </div>
+                              <p className="text-xs text-gray-600 line-clamp-2">
+                                {notif.message}
+                              </p>
+                              <p className="text-xs text-gray-400 mt-1">
+                                {new Date(notif.createdAt).toLocaleDateString()}
+                              </p>
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+
             <div className="hidden sm:flex items-center gap-2 px-3 py-1.5 bg-sky-50 rounded-full">
               <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div>
               <span className="text-sm text-sky-700">Online</span>

@@ -1,12 +1,13 @@
 import Appointment from "../models/Appointment.js";
 import DoctorQueue from "../models/DoctorQueue.js";
 import User from "../models/User.js";
+import MedicalDocument from "../models/MedicalDocument.js";
 import {
   analyzeHealthProblem,
   reorderQueueByPriority,
   assignOptimalSlot,
 } from "../utils/appointmentPriority.js";
-import { sendRescheduleEmail } from "../utils/emailService.js";
+import { sendRescheduleEmail, sendPrescriptionEmail } from "../utils/emailService.js";
 
 /**
  * Get all doctors
@@ -982,6 +983,127 @@ function getDailyBreakdown(appointments, start, end) {
   return breakdown;
 }
 
+/**
+ * Save prescription and create medical document
+ * @route POST /api/appointments/doctor/:id/save-prescription
+ * @access Private (Doctor)
+ */
+export const savePrescription = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { notes, prescription, advice } = req.body;
+    const doctorId = req.user._id;
+
+    if (!prescription) {
+      return res.status(400).json({ message: "Prescription is required" });
+    }
+
+    const appointment = await Appointment.findOne({
+      _id: id,
+      doctor: doctorId,
+      status: { $in: ["in-progress", "confirmed"] },
+    });
+
+    if (!appointment) {
+      return res.status(404).json({
+        message: "Appointment not found or not in consultation",
+      });
+    }
+
+    // Update appointment with consultation details
+    appointment.doctorNotes = notes || "";
+    appointment.prescription = prescription;
+    appointment.status = "completed";
+    appointment.completedAt = new Date();
+
+    await appointment.save();
+
+    // Create medical document for the prescription
+    const medicalDocument = new MedicalDocument({
+      student: appointment.student,
+      documentType: "prescription",
+      extractedText: prescription,
+      analyzedData: {
+        doctorName: (await User.findById(doctorId))?.name || "Doctor",
+        summary: advice || "No additional advice provided",
+        documentType: "prescription",
+      },
+      processingStatus: "completed",
+      uploadDate: new Date(),
+    });
+
+    await medicalDocument.save();
+
+    // Get doctor details
+    const doctor = await User.findById(doctorId);
+
+    // Send prescription email to student
+    try {
+      const student = await User.findById(appointment.student);
+
+      if (student && student.email && doctor) {
+        const slotDateFormatted = new Date(appointment.slotDate).toLocaleDateString(
+          "en-IN",
+          { year: "numeric", month: "long", day: "numeric" }
+        );
+
+        await sendPrescriptionEmail(
+          student.email,
+          student.name,
+          doctor.name,
+          appointment.slotTime,
+          appointment.slotEndTime,
+          slotDateFormatted,
+          prescription,
+          advice || ""
+        );
+      }
+    } catch (emailError) {
+      console.error("Failed to send prescription email:", emailError);
+      // Don't fail the operation if email fails
+    }
+
+    // Add notification to student's dashboard
+    try {
+      await User.findByIdAndUpdate(
+        appointment.student,
+        {
+          $push: {
+            notifications: {
+              type: "new_medical_report",
+              title: "New Medical Report Added",
+              message: `Your prescription from Dr. ${doctor?.name || "Doctor"} has been added to your medical records.`,
+              data: {
+                documentId: medicalDocument._id,
+                appointmentId: appointment._id,
+                doctorName: doctor?.name,
+              },
+              read: false,
+              createdAt: new Date(),
+            },
+          },
+        },
+        { new: true }
+      );
+    } catch (notifError) {
+      console.error("Failed to add notification:", notifError);
+    }
+
+    res.json({
+      message: "Prescription saved successfully",
+      appointment: await Appointment.findById(id)
+        .populate("student", "name email studentId")
+        .lean(),
+      medicalDocument,
+    });
+  } catch (error) {
+    console.error("Error saving prescription:", error);
+    res
+      .status(500)
+      .json({ message: "Error saving prescription: " + error.message });
+  }
+};
+
 export default {
   getDoctors,
   getAvailableSlots,
@@ -992,6 +1114,7 @@ export default {
   updateAppointmentStatus,
   updateAppointmentPriority,
   rescheduleAppointment,
+  savePrescription,
   getNotifications,
   markNotificationRead,
   clearNotification,

@@ -9,23 +9,23 @@ const medicalDocumentSchema = new mongoose.Schema(
     },
     filename: {
       type: String,
-      required: true,
+      required: false,
     },
     originalName: {
       type: String,
-      required: true,
+      required: false,
     },
     mimeType: {
       type: String,
-      required: true,
+      required: false,
     },
     fileSize: {
       type: Number,
-      required: true,
+      required: false,
     },
     filePath: {
       type: String,
-      required: true,
+      required: false,
     },
     extractedText: {
       type: String,

@@ -13,7 +13,10 @@ import {
   generateStudentQRCode,
   getStudentQRCode,
   deleteStudentQRCode,
-  scanQRCode
+  scanQRCode,
+  getNotifications,
+  markNotificationAsRead,
+  clearAllNotifications
 } from '../controllers/patientController.js';
 import { protect, authorize } from '../middleware/auth.js';
 
@@ -27,6 +30,9 @@ router.get('/my-diet', protect, authorize('student'), getMyDiet);
 router.post('/generate-qr', protect, authorize('student'), generateStudentQRCode);
 router.get('/my-qr', protect, authorize('student'), getStudentQRCode);
 router.delete('/delete-qr', protect, authorize('student'), deleteStudentQRCode);
+router.get('/notifications', protect, authorize('student'), getNotifications);
+router.put('/notifications/:id/read', protect, authorize('student'), markNotificationAsRead);
+router.delete('/notifications/clear', protect, authorize('student'), clearAllNotifications);
 
 // Doctor routes
 router.get('/queue', protect, authorize('doctor'), getPatientQueue);
