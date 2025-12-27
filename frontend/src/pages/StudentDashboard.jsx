@@ -38,6 +38,7 @@ import {
   RefreshCw,
   Bell,
   Info,
+  Download,
 } from "lucide-react";
 
 const HOSTEL_BLOCKS = ["I1", "I2", "I3", "K1", "K2", "K3"];
@@ -161,10 +162,18 @@ const StudentDashboard = () => {
   const [notifications, setNotifications] = useState([]);
   const [showNotifications, setShowNotifications] = useState(false);
 
+  // QR Code state
+  const [qrCode, setQrCode] = useState(null);
+  const [qrLoading, setQrLoading] = useState(false);
+  const [qrGenerated, setQrGenerated] = useState(false);
+  const [showDeleteQRConfirm, setShowDeleteQRConfirm] = useState(false);
+  const [qrDeleteLoading, setQrDeleteLoading] = useState(false);
+
   useEffect(() => {
     fetchData();
     fetchProfile();
     fetchNotifications();
+    fetchQRCode();
 
     // Poll for notifications every 15 seconds
     const notificationInterval = setInterval(fetchNotifications, 15000);
@@ -283,6 +292,59 @@ const StudentDashboard = () => {
       setNotifications((prev) => prev.filter((n) => n._id !== appointmentId));
     } catch (error) {
       console.error("Error marking notification read:", error);
+    }
+  };
+
+  // QR Code Functions
+  const fetchQRCode = async () => {
+    try {
+      const response = await api.get("/patient/my-qr");
+      setQrCode(response.data);
+      setQrGenerated(true);
+    } catch (error) {
+      console.error("Error fetching QR code:", error);
+      setQrGenerated(false);
+    }
+  };
+
+  const handleGenerateQRCode = async () => {
+    setQrLoading(true);
+    try {
+      const response = await api.post("/patient/generate-qr");
+      setQrCode(response.data);
+      setQrGenerated(true);
+    } catch (error) {
+      console.error("Error generating QR code:", error);
+      alert("Failed to generate QR code: " + (error.response?.data?.message || error.message));
+    } finally {
+      setQrLoading(false);
+    }
+  };
+
+  const handleDownloadQRCode = () => {
+    if (qrCode?.qrCodeImage) {
+      const link = document.createElement("a");
+      link.href = qrCode.qrCodeImage;
+      link.download = `qr-code-${user?.studentId}.png`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+    }
+  };
+
+  const handleDeleteQRCode = async () => {
+    setQrDeleteLoading(true);
+    try {
+      await api.delete("/patient/delete-qr");
+      setQrCode(null);
+      setQrGenerated(false);
+      setShowDeleteQRConfirm(false);
+      alert("QR code deleted successfully. You can generate a new one anytime.");
+    } catch (error) {
+      console.error("Error deleting QR code:", error);
+      alert("Failed to delete QR code: " + (error.response?.data?.message || error.message));
+    } finally {
+      setQrDeleteLoading(false);
     }
   };
 
@@ -751,6 +813,7 @@ const StudentDashboard = () => {
             { id: "leaves", label: "Medical Leaves", icon: Calendar },
             { id: "diet", label: "Diet Plan", icon: Utensils },
             { id: "documents", label: "Medical Documents", icon: FolderOpen },
+            { id: "qrcode", label: "My QR Code", icon: Hash },
             { id: "profile", label: "My Profile", icon: User },
           ].map((tab) => (
             <button
@@ -842,6 +905,7 @@ const StudentDashboard = () => {
                 {activeTab === "leaves" && "Medical Leaves"}
                 {activeTab === "diet" && "Diet Recommendations"}
                 {activeTab === "documents" && "Medical Documents"}
+                {activeTab === "qrcode" && "My QR Code"}
                 {activeTab === "profile" && "My Profile"}
               </h1>
               <p className="text-sm text-gray-500 hidden sm:block">
@@ -856,6 +920,7 @@ const StudentDashboard = () => {
                   "Your personalized diet recommendations"}
                 {activeTab === "documents" &&
                   "Upload and analyze your medical records"}
+                {activeTab === "qrcode" && "Share your medical QR code with doctors"}
                 {activeTab === "profile" && "Manage your account details"}
               </p>
             </div>
@@ -2733,9 +2798,188 @@ const StudentDashboard = () => {
                   )}
                 </div>
               )}
+
+              {/* QR Code Tab */}
+              {activeTab === "qrcode" && (
+                <div>
+                  <h2 className="text-xl font-semibold text-gray-800 mb-4">
+                    Your Medical QR Code
+                  </h2>
+                  <p className="text-gray-600 mb-6">
+                    Share this QR code with doctors to grant them instant access to your complete medical history and records.
+                  </p>
+
+                  {!qrGenerated ? (
+                    <div className="bg-sky-50 rounded-xl p-8 border-2 border-dashed border-sky-200 text-center">
+                      <Hash className="h-12 w-12 text-sky-400 mx-auto mb-3" />
+                      <h3 className="font-medium text-gray-800 mb-2">
+                        Generate Your QR Code
+                      </h3>
+                      <p className="text-sm text-gray-500 mb-6">
+                        Generate a unique QR code that doctors can scan to access your medical records instantly.
+                      </p>
+                      <button
+                        onClick={handleGenerateQRCode}
+                        disabled={qrLoading}
+                        className="inline-flex items-center gap-2 px-6 py-2.5 bg-sky-500 text-white rounded-lg hover:bg-sky-600 transition-colors disabled:opacity-50"
+                      >
+                        {qrLoading ? (
+                          <>
+                            <Loader2 className="h-4 w-4 animate-spin" />
+                            Generating...
+                          </>
+                        ) : (
+                          <>
+                            <Plus className="h-4 w-4" />
+                            Generate QR Code
+                          </>
+                        )}
+                      </button>
+                    </div>
+                  ) : qrCode ? (
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                      {/* QR Code Display */}
+                      <div className="flex flex-col items-center justify-center">
+                        <div className="bg-white p-6 rounded-xl border border-gray-200 shadow-sm">
+                          {qrCode.qrCodeImage ? (
+                            <img
+                              src={qrCode.qrCodeImage}
+                              alt="Student QR Code"
+                              className="w-64 h-64"
+                            />
+                          ) : (
+                            <div className="w-64 h-64 bg-gray-100 flex items-center justify-center rounded-lg">
+                              <span className="text-gray-500">Loading QR Code...</span>
+                            </div>
+                          )}
+                        </div>
+                        <div className="flex gap-3 mt-4">
+                          <button
+                            onClick={handleDownloadQRCode}
+                            className="flex-1 inline-flex items-center justify-center gap-2 px-4 py-2 bg-green-500 text-white rounded-lg hover:bg-green-600 transition-colors font-medium"
+                          >
+                            <Download className="h-4 w-4" />
+                            Download
+                          </button>
+                          <button
+                            onClick={() => setShowDeleteQRConfirm(true)}
+                            className="flex-1 inline-flex items-center justify-center gap-2 px-4 py-2 bg-red-500 text-white rounded-lg hover:bg-red-600 transition-colors font-medium"
+                          >
+                            <X className="h-4 w-4" />
+                            Delete & Regenerate
+                          </button>
+                        </div>
+                      </div>
+
+                      {/* QR Code Info */}
+                      <div className="space-y-4">
+                        <div className="bg-blue-50 border border-blue-200 rounded-xl p-4">
+                          <h3 className="font-semibold text-blue-900 mb-2 flex items-center gap-2">
+                            <Info className="h-5 w-5" />
+                            How It Works
+                          </h3>
+                          <ul className="text-sm text-blue-800 space-y-2 list-disc list-inside">
+                            <li>Doctors can scan this QR code before writing prescriptions</li>
+                            <li>Scanning grants instant access to your medical history</li>
+                            <li>Your complete medical records will be visible to the doctor</li>
+                            <li>Download and keep this code for easy access</li>
+                          </ul>
+                        </div>
+
+                        <div className="bg-gradient-to-br from-sky-50 to-blue-50 rounded-xl p-4 border border-sky-200">
+                          <h3 className="font-semibold text-gray-800 mb-3">Your Information</h3>
+                          <div className="space-y-2 text-sm">
+                            <div className="flex justify-between">
+                              <span className="text-gray-600">Name:</span>
+                              <span className="font-medium text-gray-800">{qrCode.name}</span>
+                            </div>
+                            <div className="flex justify-between">
+                              <span className="text-gray-600">Student ID:</span>
+                              <span className="font-medium text-gray-800">{qrCode.studentId}</span>
+                            </div>
+                            <div className="flex justify-between">
+                              <span className="text-gray-600">Email:</span>
+                              <span className="font-medium text-gray-800">{qrCode.email}</span>
+                            </div>
+                            <div className="flex justify-between">
+                              <span className="text-gray-600">Status:</span>
+                              <span className="inline-flex items-center gap-1 px-2 py-1 bg-green-100 text-green-700 rounded-full text-xs font-medium">
+                                <CheckCircle className="h-3 w-3" />
+                                Active
+                              </span>
+                            </div>
+                          </div>
+                        </div>
+
+                        <div className="bg-yellow-50 border border-yellow-200 rounded-xl p-4">
+                          <h3 className="font-semibold text-yellow-900 mb-2 flex items-center gap-2">
+                            <AlertCircle className="h-5 w-5" />
+                            Important
+                          </h3>
+                          <p className="text-sm text-yellow-800">
+                            Keep this QR code secure. Anyone who scans it can access your medical records.
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="text-center py-8">
+                      <p className="text-gray-500">Unable to load QR code</p>
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
           </div>
         </main>
+
+        {/* Delete QR Code Confirmation Modal */}
+        {showDeleteQRConfirm && (
+          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+            <div className="bg-white rounded-xl shadow-lg max-w-md w-full mx-4 p-6">
+              <div className="flex items-center gap-3 mb-4">
+                <div className="h-12 w-12 rounded-full bg-red-100 flex items-center justify-center">
+                  <AlertCircle className="h-6 w-6 text-red-600" />
+                </div>
+                <h2 className="text-xl font-semibold text-gray-800">Delete QR Code?</h2>
+              </div>
+
+              <p className="text-gray-600 mb-2">
+                Are you sure you want to delete your QR code?
+              </p>
+              <p className="text-sm text-gray-500 mb-6">
+                You can generate a new one anytime, but the old QR code will no longer work.
+              </p>
+
+              <div className="flex gap-3">
+                <button
+                  onClick={() => setShowDeleteQRConfirm(false)}
+                  disabled={qrDeleteLoading}
+                  className="flex-1 px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors disabled:opacity-50 font-medium"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleDeleteQRCode}
+                  disabled={qrDeleteLoading}
+                  className="flex-1 px-4 py-2 bg-red-500 text-white rounded-lg hover:bg-red-600 transition-colors disabled:opacity-50 font-medium inline-flex items-center justify-center gap-2"
+                >
+                  {qrDeleteLoading ? (
+                    <>
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                      Deleting...
+                    </>
+                  ) : (
+                    <>
+                      <X className="h-4 w-4" />
+                      Delete
+                    </>
+                  )}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );

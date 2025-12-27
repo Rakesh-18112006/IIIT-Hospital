@@ -27,7 +27,13 @@ import {
   Mail,
   Building,
   Hash,
+  Info,
+  Camera,
+  Upload,
+  FileCheck,
+  Download,
 } from "lucide-react";
+import QrScanner from "qr-scanner";
 
 const DoctorDashboard = () => {
   const { user, logout } = useAuth();
@@ -77,6 +83,16 @@ const DoctorDashboard = () => {
   const [rescheduleReason, setRescheduleReason] = useState("");
   const [rescheduleTime, setRescheduleTime] = useState("");
   const [showRescheduleModal, setShowRescheduleModal] = useState(false);
+
+  // QR Scanner state
+  const [showQRScanner, setShowQRScanner] = useState(false);
+  const [qrScannerLoading, setQrScannerLoading] = useState(false);
+  const [qrScanResult, setQrScanResult] = useState(null);
+  const [qrScanError, setQrScanError] = useState("");
+  const [cameraActive, setCameraActive] = useState(false);
+  const [videoRef, setVideoRef] = useState(null);
+  const [qrScannerInstance, setQrScannerInstance] = useState(null);
+  const [scanMode, setScanMode] = useState("camera"); // 'camera' or 'upload'
 
   useEffect(() => {
     fetchQueue();
@@ -255,6 +271,155 @@ const DoctorDashboard = () => {
       console.error("Error fetching patient details:", error);
     } finally {
       setDetailsLoading(false);
+    }
+  };
+
+  // QR Code Scanner Functions
+  const handleQRCodeInput = async (qrData) => {
+    if (!qrData) {
+      setQrScanError("No QR code data detected. Please try again.");
+      return;
+    }
+
+    setQrScannerLoading(true);
+    setQrScanError("");
+
+    try {
+      // Handle both direct string and object responses from qr-scanner
+      let dataToSend = qrData;
+      
+      // If qrData is an object with a 'data' property (from qr-scanner upload), extract it
+      if (typeof qrData === 'object' && qrData !== null && qrData.data) {
+        console.log("📱 [Upload Mode] Detected object with data property");
+        dataToSend = qrData.data;
+      }
+      
+      // Ensure dataToSend is a string and trim whitespace
+      dataToSend = typeof dataToSend === 'string' ? dataToSend.trim() : JSON.stringify(dataToSend);
+      
+      // Log for debugging
+      console.log("📱 QR Data Type:", typeof dataToSend);
+      console.log("📱 QR Data Length:", dataToSend.length);
+      console.log("📱 QR Data Preview:", dataToSend.substring(0, 100));
+
+      // Validate QR data format
+      try {
+        const parsedData = JSON.parse(dataToSend);
+        console.log("✅ QR Data Valid JSON:", parsedData);
+        
+        // Check required fields
+        if (!parsedData.userId || !parsedData.studentId || !parsedData.token) {
+          console.error("❌ Missing fields - userId:", !!parsedData.userId, "studentId:", !!parsedData.studentId, "token:", !!parsedData.token);
+          throw new Error('Missing required fields: userId, studentId, or token');
+        }
+        
+        console.log("✅ All required fields present");
+      } catch (parseErr) {
+        console.error("❌ QR Data Parse Error:", parseErr.message);
+        setQrScanError(`Invalid QR code format: ${parseErr.message}`);
+        setQrScannerLoading(false);
+        return;
+      }
+
+      console.log("📤 Sending QR data to backend...");
+      const response = await api.post("/patient/scan-qr", {
+        qrData: dataToSend,
+      });
+
+      console.log("✅ QR Scan Success:", response.data);
+      setQrScanResult(response.data);
+      setShowQRScanner(false);
+      setScanMode("camera");
+    } catch (error) {
+      console.error("❌ Error scanning QR code:", error);
+      
+      // Better error messages
+      let errorMessage = "Failed to scan QR code. Please try again.";
+      
+      if (error.response?.status === 400) {
+        errorMessage = error.response?.data?.message || "Invalid QR code format. Make sure you're scanning a valid QR code.";
+      } else if (error.response?.status === 404) {
+        errorMessage = error.response?.data?.message || "Student not found. The QR code may be invalid or expired.";
+      } else if (error.response?.status === 403) {
+        errorMessage = "Only doctors can scan QR codes.";
+      } else if (error.message === 'Network Error') {
+        errorMessage = "Network error. Please check your connection and try again.";
+      }
+      
+      console.error("🔴 Error Message:", errorMessage);
+      setQrScanError(errorMessage);
+      setQrScanResult(null);
+    } finally {
+      setQrScannerLoading(false);
+    }
+  };
+
+  // Start camera scanner
+  const startCameraScanner = async () => {
+    try {
+      if (!videoRef) return;
+      
+      setCameraActive(true);
+      const scanner = new QrScanner(
+        videoRef,
+        async (result) => {
+          try {
+            const qrData = result.data;
+            setCameraActive(false);
+            if (qrScannerInstance) {
+              qrScannerInstance.stop();
+              setQrScannerInstance(null);
+            }
+            await handleQRCodeInput(qrData);
+          } catch (err) {
+            console.error("Error processing QR:", err);
+          }
+        },
+        {
+          onDecodeError: () => {
+            // Ignore decode errors, keep scanning
+          },
+          highlightCodeOutline: true,
+          preferredCamera: "environment",
+        }
+      );
+
+      setQrScannerInstance(scanner);
+      await scanner.start();
+    } catch (error) {
+      console.error("Error starting camera:", error);
+      setQrScanError("Failed to access camera. Please check permissions.");
+      setCameraActive(false);
+    }
+  };
+
+  // Stop camera scanner
+  const stopCameraScanner = async () => {
+    if (qrScannerInstance) {
+      await qrScannerInstance.stop();
+      setQrScannerInstance(null);
+    }
+    setCameraActive(false);
+  };
+
+  // Handle file upload
+  const handleFileUpload = async (event) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    setQrScannerLoading(true);
+    setQrScanError("");
+
+    try {
+      const image = await QrScanner.scanImage(file, {
+        returnDetailedScanResult: false,
+      });
+      await handleQRCodeInput(image);
+    } catch (error) {
+      console.error("Error scanning uploaded QR:", error);
+      setQrScanError("Invalid QR code image. Please try another image.");
+    } finally {
+      setQrScannerLoading(false);
     }
   };
 
@@ -451,6 +616,7 @@ const DoctorDashboard = () => {
             { id: "queue", label: "Patient Queue", icon: Users },
             { id: "appointments", label: "Appointments", icon: CalendarClock },
             { id: "consultation", label: "Consultation", icon: Stethoscope },
+            { id: "qr-scanner", label: "QR Scanner", icon: Hash },
           ].map((tab) => (
             <button
               key={tab.id}
@@ -1728,6 +1894,356 @@ const DoctorDashboard = () => {
                     )}
                   </button>
                 </div>
+              </div>
+            </div>
+          )}
+
+          {/* QR Scanner Tab */}
+          {activeTab === "qr-scanner" && (
+            <div className="max-w-4xl mx-auto">
+              <div className="bg-white rounded-xl shadow-sm border border-sky-100 p-6">
+                <h2 className="text-xl font-semibold text-gray-800 mb-2">
+                  Patient QR Code Scanner
+                </h2>
+                <p className="text-gray-600 mb-6">
+                  Scan a student's QR code using your camera or upload an image to instantly access their complete medical history, records, documents, and prescriptions.
+                </p>
+
+                {/* Scan Mode Toggle */}
+                <div className="flex gap-3 mb-6">
+                  <button
+                    onClick={() => {
+                      setScanMode("camera");
+                      setQrScanError("");
+                    }}
+                    className={`flex items-center gap-2 px-4 py-2.5 rounded-lg font-medium transition-all ${
+                      scanMode === "camera"
+                        ? "bg-sky-500 text-white shadow-md"
+                        : "bg-gray-100 text-gray-700 hover:bg-gray-200"
+                    }`}
+                  >
+                    <Camera className="h-4 w-4" />
+                    Camera Scan
+                  </button>
+                  <button
+                    onClick={() => {
+                      setScanMode("upload");
+                      setQrScanError("");
+                      if (cameraActive) stopCameraScanner();
+                    }}
+                    className={`flex items-center gap-2 px-4 py-2.5 rounded-lg font-medium transition-all ${
+                      scanMode === "upload"
+                        ? "bg-sky-500 text-white shadow-md"
+                        : "bg-gray-100 text-gray-700 hover:bg-gray-200"
+                    }`}
+                  >
+                    <Upload className="h-4 w-4" />
+                    Upload Image
+                  </button>
+                </div>
+
+                {/* Camera Scanner */}
+                {scanMode === "camera" && (
+                  <div className="space-y-4 mb-6">
+                    <div className="bg-sky-50 rounded-xl p-6 border-2 border-dashed border-sky-200">
+                      {!cameraActive ? (
+                        <div className="text-center">
+                          <Camera className="h-12 w-12 text-sky-400 mx-auto mb-4" />
+                          <p className="text-gray-700 mb-4">
+                            Point your camera at the student's QR code
+                          </p>
+                          <button
+                            onClick={startCameraScanner}
+                            disabled={qrScannerLoading}
+                            className="inline-flex items-center gap-2 px-6 py-2.5 bg-sky-500 text-white rounded-lg hover:bg-sky-600 transition-colors disabled:opacity-50 font-medium"
+                          >
+                            {qrScannerLoading ? (
+                              <>
+                                <Loader2 className="h-4 w-4 animate-spin" />
+                                Starting...
+                              </>
+                            ) : (
+                              <>
+                                <Camera className="h-4 w-4" />
+                                Start Camera
+                              </>
+                            )}
+                          </button>
+                        </div>
+                      ) : (
+                        <div>
+                          <video
+                            ref={(el) => setVideoRef(el)}
+                            style={{
+                              width: "100%",
+                              maxWidth: "400px",
+                              margin: "0 auto",
+                              borderRadius: "8px",
+                            }}
+                          />
+                          <p className="text-center text-sm text-gray-600 mt-4">
+                            Position QR code within the frame
+                          </p>
+                          <button
+                            onClick={stopCameraScanner}
+                            className="mt-4 w-full px-4 py-2 bg-red-500 text-white rounded-lg hover:bg-red-600 font-medium"
+                          >
+                            Stop Camera
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
+
+                {/* File Upload Scanner */}
+                {scanMode === "upload" && (
+                  <div className="space-y-4 mb-6">
+                    <div className="bg-sky-50 rounded-xl p-6 border-2 border-dashed border-sky-200">
+                      <label className="flex flex-col items-center justify-center cursor-pointer">
+                        <Upload className="h-12 w-12 text-sky-400 mb-4" />
+                        <p className="text-gray-700 font-medium mb-2">
+                          Upload QR Code Image
+                        </p>
+                        <p className="text-sm text-gray-500 mb-4">
+                          PNG, JPG, or other image formats
+                        </p>
+                        <input
+                          type="file"
+                          accept="image/*"
+                          onChange={handleFileUpload}
+                          disabled={qrScannerLoading}
+                          className="hidden"
+                        />
+                        <button
+                          onClick={(e) => e.currentTarget.parentElement.querySelector('input').click()}
+                          disabled={qrScannerLoading}
+                          className="inline-flex items-center gap-2 px-6 py-2.5 bg-sky-500 text-white rounded-lg hover:bg-sky-600 transition-colors disabled:opacity-50 font-medium"
+                        >
+                          {qrScannerLoading ? (
+                            <>
+                              <Loader2 className="h-4 w-4 animate-spin" />
+                              Scanning...
+                            </>
+                          ) : (
+                            <>
+                              <FileCheck className="h-4 w-4" />
+                              Select Image
+                            </>
+                          )}
+                        </button>
+                      </label>
+                    </div>
+                  </div>
+                )}
+
+                {/* Error Message */}
+                {qrScanError && (
+                  <div className="bg-red-50 border border-red-200 text-red-700 rounded-lg p-4 flex items-center gap-2 mb-6">
+                    <AlertCircle className="h-5 w-5 flex-shrink-0" />
+                    <span>{qrScanError}</span>
+                  </div>
+                )}
+
+                {/* Scan Results */}
+                {qrScanResult && (
+                  <div className="space-y-4">
+                    {/* Student Info */}
+                    <div className="bg-gradient-to-br from-sky-50 to-blue-50 rounded-xl p-6 border border-sky-200">
+                      <h3 className="text-lg font-semibold text-gray-800 mb-4 flex items-center gap-2">
+                        <User className="h-5 w-5 text-sky-600" />
+                        Patient Information
+                      </h3>
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div>
+                          <p className="text-sm text-gray-600">Name</p>
+                          <p className="font-semibold text-gray-800">{qrScanResult.student.name}</p>
+                        </div>
+                        <div>
+                          <p className="text-sm text-gray-600">Student ID</p>
+                          <p className="font-semibold text-gray-800">{qrScanResult.student.studentId}</p>
+                        </div>
+                        <div>
+                          <p className="text-sm text-gray-600">Email</p>
+                          <p className="font-semibold text-gray-800">{qrScanResult.student.email}</p>
+                        </div>
+                        <div>
+                          <p className="text-sm text-gray-600">Phone</p>
+                          <p className="font-semibold text-gray-800">{qrScanResult.student.phone || "N/A"}</p>
+                        </div>
+                        <div>
+                          <p className="text-sm text-gray-600">Branch</p>
+                          <p className="font-semibold text-gray-800">{qrScanResult.student.branch || "N/A"}</p>
+                        </div>
+                        <div>
+                          <p className="text-sm text-gray-600">Year</p>
+                          <p className="font-semibold text-gray-800">{qrScanResult.student.year || "N/A"}</p>
+                        </div>
+                        <div>
+                          <p className="text-sm text-gray-600">Hostel</p>
+                          <p className="font-semibold text-gray-800">{qrScanResult.student.hostelBlock || "N/A"}</p>
+                        </div>
+                        <div>
+                          <p className="text-sm text-gray-600">Address</p>
+                          <p className="font-semibold text-gray-800 text-xs">{qrScanResult.student.address || "N/A"}</p>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Medical Records */}
+                    {qrScanResult.medicalRecords && qrScanResult.medicalRecords.length > 0 && (
+                      <div className="border border-gray-200 rounded-xl overflow-hidden">
+                        <div className="bg-gray-50 px-6 py-3 border-b border-gray-200">
+                          <h3 className="font-semibold text-gray-800 flex items-center gap-2">
+                            <FileText className="h-5 w-5" />
+                            Medical Records ({qrScanResult.medicalRecords.length})
+                          </h3>
+                        </div>
+                        <div className="max-h-96 overflow-y-auto">
+                          {qrScanResult.medicalRecords.map((record, idx) => (
+                            <div key={idx} className="px-6 py-4 border-b border-gray-100 hover:bg-gray-50">
+                              <div className="flex justify-between items-start mb-2">
+                                <div className="flex-1">
+                                  <p className="font-medium text-gray-800">
+                                    {record.symptoms?.join(", ") || "Unknown Symptoms"}
+                                  </p>
+                                  <p className="text-sm text-gray-500 mt-1">{record.doctorNotes}</p>
+                                </div>
+                                <span className={`px-3 py-1 rounded-full text-xs font-medium whitespace-nowrap ml-2 ${
+                                  record.severity === "red" ? "bg-red-100 text-red-700" :
+                                  record.severity === "orange" ? "bg-orange-100 text-orange-700" :
+                                  "bg-green-100 text-green-700"
+                                }`}>
+                                  {record.severity?.toUpperCase()}
+                                </span>
+                              </div>
+                              {record.prescription && (
+                                <div className="mt-2 p-2 bg-blue-50 rounded text-sm text-blue-900">
+                                  <strong>Prescription:</strong> {record.prescription}
+                                </div>
+                              )}
+                              {record.advice && (
+                                <div className="mt-2 p-2 bg-green-50 rounded text-sm text-green-900">
+                                  <strong>Advice:</strong> {record.advice}
+                                </div>
+                              )}
+                              <p className="text-xs text-gray-400 mt-2">
+                                {new Date(record.createdAt).toLocaleDateString()}
+                              </p>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Medical Leaves */}
+                    {qrScanResult.medicalLeaves && qrScanResult.medicalLeaves.length > 0 && (
+                      <div className="border border-gray-200 rounded-xl overflow-hidden">
+                        <div className="bg-gray-50 px-6 py-3 border-b border-gray-200">
+                          <h3 className="font-semibold text-gray-800 flex items-center gap-2">
+                            <Calendar className="h-5 w-5" />
+                            Medical Leaves ({qrScanResult.medicalLeaves.length})
+                          </h3>
+                        </div>
+                        <div className="max-h-64 overflow-y-auto">
+                          {qrScanResult.medicalLeaves.map((leave, idx) => (
+                            <div key={idx} className="px-6 py-4 border-b border-gray-100 hover:bg-gray-50">
+                              <p className="text-sm text-gray-800">
+                                <strong>Period:</strong> {new Date(leave.startDate).toLocaleDateString()} to {new Date(leave.endDate).toLocaleDateString()} <br />
+                                <strong>Reason:</strong> {leave.reason}
+                              </p>
+                              {leave.notes && (
+                                <p className="text-sm text-gray-600 mt-2">
+                                  <strong>Notes:</strong> {leave.notes}
+                                </p>
+                              )}
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Diet Recommendations */}
+                    {qrScanResult.dietRecommendations && qrScanResult.dietRecommendations.length > 0 && (
+                      <div className="border border-gray-200 rounded-xl overflow-hidden">
+                        <div className="bg-gray-50 px-6 py-3 border-b border-gray-200">
+                          <h3 className="font-semibold text-gray-800 flex items-center gap-2">
+                            <Utensils className="h-5 w-5" />
+                            Diet Recommendations ({qrScanResult.dietRecommendations.length})
+                          </h3>
+                        </div>
+                        <div className="max-h-64 overflow-y-auto">
+                          {qrScanResult.dietRecommendations.map((diet, idx) => (
+                            <div key={idx} className="px-6 py-4 border-b border-gray-100 hover:bg-gray-50">
+                              <p className="text-sm text-gray-800">
+                                <strong>Type:</strong> {diet.dietType} <br />
+                                <strong>Instructions:</strong> {diet.specialInstructions} <br />
+                                <strong>Restrictions:</strong> {diet.restrictions}
+                              </p>
+                              <p className="text-xs text-gray-400 mt-2">
+                                Active from {new Date(diet.startDate).toLocaleDateString()}
+                              </p>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Medical Documents */}
+                    {qrScanResult.medicalDocuments && qrScanResult.medicalDocuments.length > 0 && (
+                      <div className="border border-gray-200 rounded-xl overflow-hidden">
+                        <div className="bg-gray-50 px-6 py-3 border-b border-gray-200">
+                          <h3 className="font-semibold text-gray-800 flex items-center gap-2">
+                            <FileCheck className="h-5 w-5" />
+                            Medical Documents ({qrScanResult.medicalDocuments.length})
+                          </h3>
+                        </div>
+                        <div className="max-h-96 overflow-y-auto">
+                          {qrScanResult.medicalDocuments.map((doc, idx) => (
+                            <div key={idx} className="px-6 py-4 border-b border-gray-100 hover:bg-gray-50">
+                              <div className="flex justify-between items-start mb-2">
+                                <div className="flex-1">
+                                  <p className="font-medium text-gray-800 flex items-center gap-2">
+                                    <FileText className="h-4 w-4 text-blue-500" />
+                                    {doc.originalName}
+                                  </p>
+                                  <p className="text-xs text-gray-500 mt-1">
+                                    {(doc.fileSize / 1024).toFixed(2)} KB • {new Date(doc.createdAt).toLocaleDateString()}
+                                  </p>
+                                </div>
+                                <a
+                                  href={`http://localhost:5000/uploads/medical-documents/${doc.filename}`}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="px-3 py-1.5 bg-blue-500 text-white rounded text-xs font-medium hover:bg-blue-600 inline-flex items-center gap-1"
+                                >
+                                  <Download className="h-3 w-3" />
+                                  View
+                                </a>
+                              </div>
+                              {doc.analyzedData && (
+                                <div className="mt-2 p-2 bg-purple-50 rounded text-xs text-purple-900">
+                                  {doc.analyzedData.bloodGroup && (
+                                    <p><strong>Blood Group:</strong> {doc.analyzedData.bloodGroup}</p>
+                                  )}
+                                  {doc.analyzedData.allergies && doc.analyzedData.allergies.length > 0 && (
+                                    <p><strong>Allergies:</strong> {doc.analyzedData.allergies.join(", ")}</p>
+                                  )}
+                                  {doc.analyzedData.conditions && doc.analyzedData.conditions.length > 0 && (
+                                    <p><strong>Conditions:</strong> {doc.analyzedData.conditions.join(", ")}</p>
+                                  )}
+                                  {doc.analyzedData.medications && doc.analyzedData.medications.length > 0 && (
+                                    <p><strong>Medications:</strong> {doc.analyzedData.medications.join(", ")}</p>
+                                  )}
+                                </div>
+                              )}
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
             </div>
           )}
