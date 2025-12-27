@@ -11,6 +11,7 @@ import patientRoutes from "./routes/patientRoutes.js";
 import adminRoutes from "./routes/adminRoutes.js";
 import messRoutes from "./routes/messRoutes.js";
 import documentRoutes from "./routes/documentRoutes.js";
+import appointmentRoutes from "./routes/appointmentRoutes.js";
 
 // ES module dirname equivalent
 const __filename = fileURLToPath(import.meta.url);
@@ -37,6 +38,7 @@ app.use("/api/patient", patientRoutes);
 app.use("/api/admin", adminRoutes);
 app.use("/api/mess", messRoutes);
 app.use("/api/documents", documentRoutes);
+app.use("/api/appointments", appointmentRoutes);
 
 // Health check
 app.get("/api/health", (req, res) => {
