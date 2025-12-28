@@ -523,22 +523,25 @@ export const scanQRCode = async (req, res) => {
 
     console.log('✅ [QR Scan] Doctor role verified:', req.user._id);
 
-    // Parse QR data
+    // Parse QR data - allow simplified format (userId only) for doctor access
     let decodedData;
     try {
       console.log('📱 [QR Scan] Attempting to parse QR data...');
-      console.log('📱 [QR Scan] QR Data Sample:', qrData.substring(0, 150));
+      const dataPreview = typeof qrData === 'string' ? qrData.substring(0, 150) : JSON.stringify(qrData).substring(0, 150);
+      console.log('📱 [QR Scan] QR Data Sample:', dataPreview);
       
-      decodedData = parseQRCode(qrData);
+      // Allow simplified format (userId only) since doctors already have access
+      decodedData = parseQRCode(qrData, true);
       console.log('✅ [QR Scan] QR data parsed successfully');
       console.log('📱 [QR Scan] Decoded data:', {
         userId: decodedData.userId,
-        studentId: decodedData.studentId,
+        studentId: decodedData.studentId || 'N/A (simplified format)',
         hasToken: !!decodedData.token
       });
     } catch (parseError) {
       console.error('❌ [QR Scan] QR Parse Error:', parseError.message);
-      console.error('❌ [QR Scan] QR Data that failed:', qrData.substring(0, 200));
+      const failedDataPreview = typeof qrData === 'string' ? qrData.substring(0, 200) : JSON.stringify(qrData).substring(0, 200);
+      console.error('❌ [QR Scan] QR Data that failed:', failedDataPreview);
       return res.status(400).json({ 
         message: `Invalid QR code format: ${parseError.message}` 
       });

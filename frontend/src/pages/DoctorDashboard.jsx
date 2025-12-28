@@ -1,6 +1,7 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
+import { useSocket } from "../context/SocketContext";
 import api from "../config/api";
 import Prescription from "../components/Prescription";
 import {
@@ -35,12 +36,16 @@ import {
   Download,
   Pill,
   Zap,
+  MessageSquare,
+  AlertTriangle,
+  Plus,
 } from "lucide-react";
 import QrScanner from "qr-scanner";
 
 const DoctorDashboard = () => {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
+  const socket = useSocket();
   const [activeTab, setActiveTab] = useState("queue");
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
@@ -109,6 +114,31 @@ const DoctorDashboard = () => {
   const [patientMedicalRecords, setPatientMedicalRecords] = useState(null);
   const [qrScanningForPrescription, setQrScanningForPrescription] = useState(false);
 
+  // Announcements state
+  const [announcements, setAnnouncements] = useState([]);
+  const [announcementsLoading, setAnnouncementsLoading] = useState(false);
+  const [creatingAnnouncement, setCreatingAnnouncement] = useState(false);
+  const [showAnnouncementForm, setShowAnnouncementForm] = useState(false);
+  const [announcementForm, setAnnouncementForm] = useState({
+    title: "",
+    message: "",
+    priority: "medium",
+  });
+  const [announcementQueue, setAnnouncementQueue] = useState([]);
+
+  // Doctor chat state
+  const [doctorChatRooms, setDoctorChatRooms] = useState([]);
+  const [selectedDoctorChatRoom, setSelectedDoctorChatRoom] = useState(null);
+  const [doctorChatMessages, setDoctorChatMessages] = useState([]);
+  const [doctorNewMessage, setDoctorNewMessage] = useState("");
+  const [medicalBotQuestion, setMedicalBotQuestion] = useState("");
+  const [requestingMedicalAccess, setRequestingMedicalAccess] = useState(false);
+  const [medicalBotLoading, setMedicalBotLoading] = useState(false);
+  const [showMedicalInfo, setShowMedicalInfo] = useState(false);
+  const [studentMedicalInfo, setStudentMedicalInfo] = useState(null);
+  const [loadingMedicalInfo, setLoadingMedicalInfo] = useState(false);
+  const doctorChatEndRef = useRef(null);
+
   useEffect(() => {
     fetchQueue();
     fetchAppointmentQueue();
@@ -123,6 +153,67 @@ const DoctorDashboard = () => {
     fetchAppointmentQueue();
   }, [appointmentDate]);
 
+  useEffect(() => {
+    if (activeTab === "announcements") {
+      fetchAnnouncements();
+    }
+    if (activeTab === "emergency-chat") {
+      fetchDoctorChatRooms();
+    }
+  }, [activeTab]);
+
+  useEffect(() => {
+    doctorChatEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [doctorChatMessages]);
+
+  // Socket.IO listeners
+  useEffect(() => {
+    if (!socket) return;
+
+    socket.on("new-message", (message) => {
+      if (selectedDoctorChatRoom && message.chatRoom === selectedDoctorChatRoom._id) {
+        setDoctorChatMessages((prev) => [...prev, message]);
+      }
+      fetchDoctorChatRooms(); // Refresh to update unread counts
+    });
+
+    socket.on("announcement-created", (announcement) => {
+      if (activeTab === "announcements") {
+        fetchAnnouncements();
+      }
+    });
+
+    socket.on("announcement-updated", (announcement) => {
+      if (activeTab === "announcements") {
+        fetchAnnouncements();
+      }
+      fetchDoctorChatRooms(); // Refresh chat rooms in case announcement status changed
+    });
+
+    socket.on("medical-access-response", async (data) => {
+      const { roomId, approved } = data;
+      // Refresh chat rooms to get updated medicalAccessGranted status
+      await fetchDoctorChatRooms();
+      // Update selected chat room if it's the one that got access granted
+      if (selectedDoctorChatRoom && selectedDoctorChatRoom._id === roomId) {
+        const roomsResponse = await api.get("/chat/rooms");
+        const updatedRoom = roomsResponse.data.find((r) => r._id === roomId);
+        if (updatedRoom) {
+          setSelectedDoctorChatRoom(updatedRoom);
+          // Also refresh messages to show the access granted message
+          await fetchDoctorChatMessages(roomId);
+        }
+      }
+    });
+
+    return () => {
+      socket.off("new-message");
+      socket.off("announcement-created");
+      socket.off("announcement-updated");
+      socket.off("medical-access-response");
+    };
+  }, [socket, selectedDoctorChatRoom, activeTab]);
+
   const fetchQueue = async () => {
     try {
       const response = await api.get("/patient/queue");
@@ -132,6 +223,201 @@ const DoctorDashboard = () => {
     } finally {
       setLoading(false);
     }
+  };
+
+  // Fetch announcements
+  const fetchAnnouncements = async () => {
+    setAnnouncementsLoading(true);
+    try {
+      const response = await api.get("/announcements");
+      setAnnouncements(response.data);
+    } catch (error) {
+      console.error("Error fetching announcements:", error);
+    } finally {
+      setAnnouncementsLoading(false);
+    }
+  };
+
+  // Create announcement
+  const handleCreateAnnouncement = async (e) => {
+    e.preventDefault();
+    setCreatingAnnouncement(true);
+    try {
+      const response = await api.post("/announcements", announcementForm);
+      setAnnouncements((prev) => [response.data, ...prev]);
+      setShowAnnouncementForm(false);
+      setAnnouncementForm({ title: "", message: "", priority: "medium" });
+      if (socket) {
+        socket.emit("announcement-created", response.data);
+      }
+    } catch (error) {
+      console.error("Error creating announcement:", error);
+      alert("Error creating announcement");
+    } finally {
+      setCreatingAnnouncement(false);
+    }
+  };
+
+  // Close announcement
+  const handleCloseAnnouncement = async (announcementId, selectedStudentId) => {
+    try {
+      const response = await api.put(`/announcements/${announcementId}/close`, {
+        selectedStudentId,
+      });
+      await fetchAnnouncements();
+      await fetchDoctorChatRooms();
+      if (socket) {
+        socket.emit("announcement-updated", response.data.announcement);
+      }
+      alert("Announcement closed successfully");
+    } catch (error) {
+      console.error("Error closing announcement:", error);
+      alert("Error closing announcement");
+    }
+  };
+
+  // Fetch announcement queue
+  const fetchAnnouncementQueue = async (announcementId) => {
+    try {
+      const response = await api.get(`/chat/announcements/${announcementId}/queue`);
+      setAnnouncementQueue(response.data);
+    } catch (error) {
+      console.error("Error fetching announcement queue:", error);
+    }
+  };
+
+  // Fetch doctor chat rooms
+  const fetchDoctorChatRooms = async () => {
+    try {
+      const response = await api.get("/chat/rooms");
+      setDoctorChatRooms(response.data);
+    } catch (error) {
+      console.error("Error fetching chat rooms:", error);
+    }
+  };
+
+  // Fetch messages for a chat room
+  const fetchDoctorChatMessages = async (roomId) => {
+    try {
+      const response = await api.get(`/chat/rooms/${roomId}/messages`);
+      setDoctorChatMessages(response.data);
+    } catch (error) {
+      console.error("Error fetching messages:", error);
+    }
+  };
+
+  // Send message
+  const handleSendDoctorMessage = async (e) => {
+    e.preventDefault();
+    if (!doctorNewMessage.trim() || !selectedDoctorChatRoom) return;
+
+    try {
+      await api.post(
+        `/chat/rooms/${selectedDoctorChatRoom._id}/messages`,
+        { message: doctorNewMessage }
+      );
+      setDoctorNewMessage("");
+      await fetchDoctorChatMessages(selectedDoctorChatRoom._id);
+    } catch (error) {
+      console.error("Error sending message:", error);
+    }
+  };
+
+  // Request medical access
+  const handleRequestMedicalAccess = async (roomId) => {
+    setRequestingMedicalAccess(true);
+    try {
+      await api.post(`/chat/rooms/${roomId}/request-medical-access`);
+      await fetchDoctorChatMessages(roomId);
+    } catch (error) {
+      console.error("Error requesting medical access:", error);
+      alert(error.response?.data?.message || "Error requesting medical access");
+    } finally {
+      setRequestingMedicalAccess(false);
+    }
+  };
+
+  // Query medical bot
+  const handleQueryMedicalBot = async (e) => {
+    e.preventDefault();
+    if (!medicalBotQuestion.trim() || !selectedDoctorChatRoom) return;
+
+    setMedicalBotLoading(true);
+    try {
+      await api.post(`/chat/rooms/${selectedDoctorChatRoom._id}/query-medical-bot`, {
+        question: medicalBotQuestion,
+      });
+      setMedicalBotQuestion("");
+      await fetchDoctorChatMessages(selectedDoctorChatRoom._id);
+    } catch (error) {
+      console.error("Error querying medical bot:", error);
+      alert(error.response?.data?.message || "Error querying medical bot");
+    } finally {
+      setMedicalBotLoading(false);
+    }
+  };
+
+  // Handle chat room selection
+  const handleSelectChatRoom = async (room) => {
+    // Fetch fresh room data to ensure we have the latest medicalAccessGranted status
+    try {
+      const roomsResponse = await api.get("/chat/rooms");
+      const freshRoom = roomsResponse.data.find((r) => r._id === room._id);
+      setSelectedDoctorChatRoom(freshRoom || room);
+      await fetchDoctorChatMessages(room._id);
+      if (socket) {
+        socket.emit("join-room", room._id);
+      }
+    } catch (error) {
+      console.error("Error fetching fresh room data:", error);
+      // Fallback to using the room from the list
+      setSelectedDoctorChatRoom(room);
+      await fetchDoctorChatMessages(room._id);
+      if (socket) {
+        socket.emit("join-room", room._id);
+      }
+    }
+  };
+
+  // Fetch student medical records
+  const fetchStudentMedicalInfo = async (studentId) => {
+    setLoadingMedicalInfo(true);
+    try {
+      // Use QR scan endpoint with student ID as QR data
+      const qrData = JSON.stringify({ userId: studentId });
+      const response = await api.post("/patient/scan-qr", { qrData });
+      const data = response.data;
+      // Transform the response to match our UI structure
+      setStudentMedicalInfo({
+        student: data.student,
+        medicalRecords: data.medicalRecords || [],
+        documents: data.medicalDocuments || [],
+        medicalLeaves: data.medicalLeaves || [],
+        dietRecommendations: data.dietRecommendations || [],
+      });
+      
+      console.log('✅ Medical info fetched:', {
+        records: data.medicalRecords?.length || 0,
+        documents: data.medicalDocuments?.length || 0,
+        leaves: data.medicalLeaves?.length || 0,
+        diets: data.dietRecommendations?.length || 0
+      });
+      setShowMedicalInfo(true);
+      return response.data;
+    } catch (error) {
+      console.error("Error fetching medical records:", error);
+      alert(
+        error.response?.data?.message || "Error fetching medical records. Please try again."
+      );
+    } finally {
+      setLoadingMedicalInfo(false);
+    }
+  };
+
+  // Handle view medical info
+  const handleViewMedicalInfo = async () => {
+    if (!selectedDoctorChatRoom?.student?._id) return;
+    await fetchStudentMedicalInfo(selectedDoctorChatRoom.student._id);
   };
 
   const fetchAppointmentQueue = async () => {
@@ -816,6 +1102,8 @@ const DoctorDashboard = () => {
           {[
             { id: "queue", label: "Patient Queue", icon: Users },
             { id: "appointments", label: "Appointments", icon: CalendarClock },
+            { id: "announcements", label: "Announcements", icon: AlertTriangle },
+            { id: "emergency-chat", label: "Emergency Chat", icon: MessageSquare },
             { id: "consultation", label: "Consultation", icon: Stethoscope },
             { id: "qr-scanner", label: "QR Scanner", icon: Hash },
           ].map((tab) => (
@@ -1838,6 +2126,135 @@ const DoctorDashboard = () => {
             </div>
           )}
 
+          {/* Announcement Form Modal */}
+          {showAnnouncementForm && (
+            <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
+              <div className="bg-white rounded-xl shadow-xl max-w-2xl w-full p-6 max-h-[90vh] overflow-y-auto">
+                <div className="flex items-center justify-between mb-6">
+                  <h3 className="text-xl font-semibold text-gray-800">
+                    Create New Announcement
+                  </h3>
+                  <button
+                    onClick={() => {
+                      setShowAnnouncementForm(false);
+                      setAnnouncementForm({
+                        title: "",
+                        message: "",
+                        priority: "medium",
+                      });
+                    }}
+                    className="p-1 hover:bg-gray-100 rounded"
+                  >
+                    <X className="h-5 w-5 text-gray-500" />
+                  </button>
+                </div>
+
+                <form onSubmit={handleCreateAnnouncement} className="space-y-4">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                      Title <span className="text-red-500">*</span>
+                    </label>
+                    <input
+                      type="text"
+                      value={announcementForm.title}
+                      onChange={(e) =>
+                        setAnnouncementForm({
+                          ...announcementForm,
+                          title: e.target.value,
+                        })
+                      }
+                      required
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-sky-500 focus:border-sky-500"
+                      placeholder="Enter announcement title..."
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                      Message <span className="text-red-500">*</span>
+                    </label>
+                    <textarea
+                      value={announcementForm.message}
+                      onChange={(e) =>
+                        setAnnouncementForm({
+                          ...announcementForm,
+                          message: e.target.value,
+                        })
+                      }
+                      required
+                      rows={6}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-sky-500 focus:border-sky-500"
+                      placeholder="Type your announcement message here. Students will be notified and can join chatrooms to respond..."
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                      Priority <span className="text-red-500">*</span>
+                    </label>
+                    <select
+                      value={announcementForm.priority}
+                      onChange={(e) =>
+                        setAnnouncementForm({
+                          ...announcementForm,
+                          priority: e.target.value,
+                        })
+                      }
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-sky-500 focus:border-sky-500"
+                    >
+                      <option value="low">Low</option>
+                      <option value="medium">Medium</option>
+                      <option value="high">High</option>
+                      <option value="urgent">Urgent</option>
+                    </select>
+                  </div>
+
+                  <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+                    <p className="text-sm text-blue-800">
+                      <strong>ℹ️ Note:</strong> When you create this announcement,
+                      all students will be notified in real-time. They can react/respond
+                      to join a private chatroom with you.
+                    </p>
+                  </div>
+
+                  <div className="flex gap-3 pt-4">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setShowAnnouncementForm(false);
+                        setAnnouncementForm({
+                          title: "",
+                          message: "",
+                          priority: "medium",
+                        });
+                      }}
+                      className="flex-1 px-4 py-2 border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="submit"
+                      disabled={creatingAnnouncement}
+                      className="flex-1 px-4 py-2 bg-sky-500 text-white rounded-lg hover:bg-sky-600 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                    >
+                      {creatingAnnouncement ? (
+                        <>
+                          <Loader2 className="h-4 w-4 animate-spin" />
+                          Creating...
+                        </>
+                      ) : (
+                        <>
+                          <Plus className="h-4 w-4" />
+                          Create Announcement
+                        </>
+                      )}
+                    </button>
+                  </div>
+                </form>
+              </div>
+            </div>
+          )}
+
           {/* Diet Plan Modal */}
           {showDietForm && (
             <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
@@ -2015,6 +2432,627 @@ const DoctorDashboard = () => {
                       </>
                     )}
                   </button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Announcements Tab */}
+          {activeTab === "announcements" && (
+            <div className="space-y-6">
+              {/* Header with Create Button */}
+              <div className="flex justify-between items-center">
+                <div>
+                  <h2 className="text-2xl font-semibold text-gray-800">
+                    Announcements
+                  </h2>
+                  <p className="text-sm text-gray-500 mt-1">
+                    Create announcements to notify students and open chatrooms
+                  </p>
+                </div>
+                <button
+                  onClick={() => setShowAnnouncementForm(true)}
+                  className="flex items-center gap-2 px-4 py-2 bg-sky-500 text-white rounded-lg hover:bg-sky-600 transition-colors shadow-sm"
+                >
+                  <Plus className="h-5 w-5" />
+                  Create Announcement
+                </button>
+              </div>
+
+              {/* Announcements List */}
+              {announcementsLoading ? (
+                <div className="flex items-center justify-center py-12">
+                  <Loader2 className="h-8 w-8 animate-spin text-sky-500" />
+                </div>
+              ) : announcements.length === 0 ? (
+                <div className="bg-white rounded-xl shadow-sm border border-sky-100 p-12 text-center">
+                  <AlertTriangle className="h-16 w-16 mx-auto mb-4 text-gray-300" />
+                  <p className="text-gray-500 text-lg mb-2">No announcements yet</p>
+                  <p className="text-gray-400 text-sm">
+                    Create your first announcement to notify students
+                  </p>
+                </div>
+              ) : (
+                <div className="space-y-4">
+                  {announcements.map((announcement) => (
+                    <div
+                      key={announcement._id}
+                      className={`bg-white rounded-xl shadow-sm border-l-4 p-6 ${
+                        announcement.priority === "urgent"
+                          ? "border-red-500"
+                          : announcement.priority === "high"
+                          ? "border-orange-500"
+                          : announcement.priority === "medium"
+                          ? "border-yellow-500"
+                          : "border-blue-500"
+                      } border-sky-100`}
+                    >
+                      <div className="flex justify-between items-start mb-4">
+                        <div className="flex-1">
+                          <div className="flex items-center gap-3 mb-2">
+                            <h3 className="text-xl font-semibold text-gray-800">
+                              {announcement.title}
+                            </h3>
+                            <span
+                              className={`px-3 py-1 rounded-full text-xs font-medium ${
+                                announcement.priority === "urgent"
+                                  ? "bg-red-100 text-red-700"
+                                  : announcement.priority === "high"
+                                  ? "bg-orange-100 text-orange-700"
+                                  : announcement.priority === "medium"
+                                  ? "bg-yellow-100 text-yellow-700"
+                                  : "bg-blue-100 text-blue-700"
+                              }`}
+                            >
+                              {announcement.priority?.toUpperCase() || "MEDIUM"}
+                            </span>
+                            <span
+                              className={`px-3 py-1 rounded-full text-xs font-medium ${
+                                announcement.status === "active"
+                                  ? "bg-green-100 text-green-700"
+                                  : announcement.status === "closed"
+                                  ? "bg-gray-100 text-gray-700"
+                                  : "bg-blue-100 text-blue-700"
+                              }`}
+                            >
+                              {announcement.status?.toUpperCase() || "ACTIVE"}
+                            </span>
+                          </div>
+                          <p className="text-gray-600 mb-3 whitespace-pre-wrap">
+                            {announcement.message}
+                          </p>
+                          <div className="flex items-center gap-4 text-sm text-gray-500">
+                            <span>
+                              Created:{" "}
+                              {new Date(announcement.createdAt).toLocaleString()}
+                            </span>
+                            {announcement.createdBy && (
+                              <span>
+                                By: Dr. {announcement.createdBy.name || "Unknown"}
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                        {announcement.status === "active" && (
+                          <button
+                            onClick={() => {
+                              if (
+                                window.confirm(
+                                  "Are you sure you want to close this announcement?"
+                                )
+                              ) {
+                                handleCloseAnnouncement(announcement._id, null);
+                              }
+                            }}
+                            className="px-4 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition-colors text-sm"
+                          >
+                            Close
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Emergency Chat Tab */}
+          {activeTab === "emergency-chat" && (
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 h-[calc(100vh-250px)]">
+              {/* Chat Rooms List */}
+              <div className="lg:col-span-1 bg-white rounded-xl shadow-sm border border-sky-100 flex flex-col">
+                <div className="p-4 border-b border-sky-100">
+                  <h2 className="text-lg font-semibold text-gray-800">
+                    Chat Rooms
+                  </h2>
+                  <p className="text-xs text-gray-500 mt-1">
+                    Conversations with students
+                  </p>
+                </div>
+                <div className="flex-1 overflow-y-auto">
+                  {doctorChatRooms.length === 0 ? (
+                    <div className="p-8 text-center text-gray-500">
+                      <MessageSquare className="h-12 w-12 mx-auto mb-2 opacity-50" />
+                      <p className="text-sm">No active chat rooms</p>
+                      <p className="text-xs mt-1">
+                        Students will appear here when they respond to announcements
+                      </p>
+                    </div>
+                  ) : (
+                    <div className="divide-y divide-sky-50">
+                      {doctorChatRooms.map((room) => (
+                        <button
+                          key={room._id}
+                          onClick={() => handleSelectChatRoom(room)}
+                          className={`w-full p-4 text-left hover:bg-sky-50 transition-colors ${
+                            selectedDoctorChatRoom?._id === room._id
+                              ? "bg-sky-50 border-l-4 border-l-sky-500"
+                              : ""
+                          }`}
+                        >
+                          <div className="flex items-center justify-between mb-1">
+                            <span className="font-medium text-sm text-gray-800">
+                              {room.student?.name || "Unknown Student"}
+                            </span>
+                            {room.unreadCount > 0 && (
+                              <span className="bg-red-500 text-white text-xs rounded-full w-5 h-5 flex items-center justify-center">
+                                {room.unreadCount}
+                              </span>
+                            )}
+                          </div>
+                          {room.announcement && (
+                            <p className="text-xs text-gray-500 mb-1 truncate">
+                              Re: {room.announcement.title}
+                            </p>
+                          )}
+                          <div className="flex items-center gap-2 mt-2">
+                            <span
+                              className={`px-2 py-0.5 rounded text-xs ${
+                                room.status === "active"
+                                  ? "bg-green-100 text-green-700"
+                                  : room.status === "waiting"
+                                  ? "bg-yellow-100 text-yellow-700"
+                                  : "bg-gray-100 text-gray-700"
+                              }`}
+                            >
+                              {room.status}
+                            </span>
+                            {room.medicalAccessGranted && (
+                              <span className="px-2 py-0.5 rounded text-xs bg-blue-100 text-blue-700">
+                                Medical Access
+                              </span>
+                            )}
+                          </div>
+                          {room.lastMessage && (
+                            <p className="text-xs text-gray-500 mt-1 truncate">
+                              {room.lastMessage.message}
+                            </p>
+                          )}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Chat Messages Area */}
+              <div className="lg:col-span-2 flex flex-col bg-white rounded-xl shadow-sm border border-sky-100">
+                {selectedDoctorChatRoom ? (
+                  <>
+                    {/* Chat Header */}
+                    <div className="p-4 border-b border-sky-100">
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <h3 className="text-lg font-semibold text-gray-800">
+                            {selectedDoctorChatRoom.student?.name || "Unknown Student"}
+                          </h3>
+                          {selectedDoctorChatRoom.announcement && (
+                            <p className="text-sm text-gray-500">
+                              Re: {selectedDoctorChatRoom.announcement.title}
+                            </p>
+                          )}
+                        </div>
+                        <div className="flex items-center gap-2">
+                          {!selectedDoctorChatRoom.medicalAccessGranted && (
+                            <button
+                              onClick={() =>
+                                handleRequestMedicalAccess(selectedDoctorChatRoom._id)
+                              }
+                              disabled={requestingMedicalAccess}
+                              className="px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition-colors text-sm disabled:opacity-50 flex items-center gap-2"
+                            >
+                              <FileText className="h-4 w-4" />
+                              {requestingMedicalAccess ? "Requesting..." : "Request Medical Access"}
+                            </button>
+                          )}
+                          {selectedDoctorChatRoom.medicalAccessGranted && (
+                            <>
+                              <span className="px-3 py-1 bg-green-100 text-green-700 rounded-lg text-sm flex items-center gap-2">
+                                <CheckCircle className="h-4 w-4" />
+                                Medical Access Granted
+                              </span>
+                              <button
+                                onClick={handleViewMedicalInfo}
+                                disabled={loadingMedicalInfo}
+                                className="px-4 py-2 bg-green-500 text-white rounded-lg hover:bg-green-600 transition-colors text-sm disabled:opacity-50 flex items-center gap-2"
+                              >
+                                {loadingMedicalInfo ? (
+                                  <Loader2 className="h-4 w-4 animate-spin" />
+                                ) : (
+                                  <FileText className="h-4 w-4" />
+                                )}
+                                View Medical Records
+                              </button>
+                            </>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Messages Area */}
+                    <div className="flex-1 overflow-y-auto p-4 space-y-4 bg-gray-50">
+                      {doctorChatMessages.length === 0 ? (
+                        <div className="flex items-center justify-center h-full text-gray-500">
+                          <div className="text-center">
+                            <MessageSquare className="h-12 w-12 mx-auto mb-2 opacity-50" />
+                            <p>No messages yet. Start the conversation!</p>
+                          </div>
+                        </div>
+                      ) : (
+                        doctorChatMessages.map((msg) => (
+                          <div
+                            key={msg._id}
+                            className={`flex ${
+                              msg.sender?._id === user?._id || msg.sender?.role === "doctor"
+                                ? "justify-end"
+                                : "justify-start"
+                            }`}
+                          >
+                            <div
+                              className={`max-w-[70%] rounded-lg p-3 ${
+                                msg.sender?._id === user?._id || msg.sender?.role === "doctor"
+                                  ? "bg-sky-500 text-white"
+                                  : msg.messageType === "system"
+                                  ? "bg-yellow-100 text-yellow-800 text-center mx-auto border border-yellow-300"
+                                  : "bg-white text-gray-800 border border-gray-200"
+                              }`}
+                            >
+                              {msg.messageType !== "system" && (
+                                <p className="text-xs font-medium mb-1 opacity-80">
+                                  {msg.sender?.name || "Unknown"}
+                                </p>
+                              )}
+                              <p className="text-sm whitespace-pre-wrap">{msg.message}</p>
+                              <p
+                                className={`text-xs mt-1 ${
+                                  msg.sender?._id === user?._id || msg.sender?.role === "doctor"
+                                    ? "opacity-80"
+                                    : "text-gray-500"
+                                }`}
+                              >
+                                {new Date(msg.createdAt).toLocaleString()}
+                              </p>
+                            </div>
+                          </div>
+                        ))
+                      )}
+                      <div ref={doctorChatEndRef} />
+                    </div>
+
+                    {/* Medical Bot Query (if access granted) */}
+                    {selectedDoctorChatRoom.medicalAccessGranted && (
+                      <div className="p-4 border-t border-sky-100 bg-blue-50">
+                        <form onSubmit={handleQueryMedicalBot} className="flex gap-2">
+                          <input
+                            type="text"
+                            value={medicalBotQuestion}
+                            onChange={(e) => setMedicalBotQuestion(e.target.value)}
+                            placeholder="Query medical information about the student..."
+                            className="flex-1 px-3 py-2 border border-blue-200 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-sm"
+                          />
+                          <button
+                            type="submit"
+                            disabled={medicalBotLoading || !medicalBotQuestion.trim()}
+                            className="px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+                          >
+                            {medicalBotLoading ? (
+                              <Loader2 className="h-4 w-4 animate-spin" />
+                            ) : (
+                              <Zap className="h-4 w-4" />
+                            )}
+                            Query
+                          </button>
+                        </form>
+                        <p className="text-xs text-blue-700 mt-2">
+                          💡 Ask questions about the student's medical history, prescriptions, or records
+                        </p>
+                      </div>
+                    )}
+
+                    {/* Message Input */}
+                    {selectedDoctorChatRoom.status !== "closed" && (
+                      <div className="p-4 border-t border-sky-100">
+                        <form onSubmit={handleSendDoctorMessage} className="flex gap-2">
+                          <input
+                            type="text"
+                            value={doctorNewMessage}
+                            onChange={(e) => setDoctorNewMessage(e.target.value)}
+                            placeholder="Type your message..."
+                            className="flex-1 px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-sky-500 focus:border-sky-500"
+                          />
+                          <button
+                            type="submit"
+                            disabled={!doctorNewMessage.trim()}
+                            className="px-6 py-2 bg-sky-500 text-white rounded-lg hover:bg-sky-600 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                          >
+                            Send
+                          </button>
+                        </form>
+                      </div>
+                    )}
+                  </>
+                ) : (
+                  <div className="flex-1 flex items-center justify-center text-gray-500">
+                    <div className="text-center">
+                      <MessageSquare className="h-16 w-16 mx-auto mb-4 opacity-50" />
+                      <p className="text-lg font-medium">Select a chat room to start</p>
+                      <p className="text-sm mt-2">
+                        Choose a conversation from the list to view messages
+                      </p>
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* Medical Information Modal */}
+          {showMedicalInfo && studentMedicalInfo && (
+            <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+              <div className="bg-white rounded-xl shadow-xl max-w-4xl w-full max-h-[90vh] overflow-y-auto">
+                <div className="p-6 border-b border-gray-200 sticky top-0 bg-white">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <h3 className="text-xl font-semibold text-gray-800">
+                        Medical Records - {selectedDoctorChatRoom?.student?.name}
+                      </h3>
+                      <p className="text-sm text-gray-500 mt-1">
+                        Student ID: {selectedDoctorChatRoom?.student?.studentId}
+                      </p>
+                    </div>
+                    <button
+                      onClick={() => {
+                        setShowMedicalInfo(false);
+                        setStudentMedicalInfo(null);
+                      }}
+                      className="p-2 hover:bg-gray-100 rounded-lg"
+                    >
+                      <X className="h-5 w-5 text-gray-500" />
+                    </button>
+                  </div>
+                </div>
+
+                <div className="p-6 space-y-6">
+                  {/* Medical Summary */}
+                  {studentMedicalInfo.summary && (
+                    <div>
+                      <h4 className="text-lg font-semibold text-gray-800 mb-3">
+                        Medical Summary
+                      </h4>
+                      <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+                        <p className="text-gray-700 whitespace-pre-wrap">
+                          {studentMedicalInfo.summary}
+                        </p>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Medical Records */}
+                  {studentMedicalInfo.medicalRecords && studentMedicalInfo.medicalRecords.length > 0 && (
+                    <div>
+                      <h4 className="text-lg font-semibold text-gray-800 mb-3 flex items-center gap-2">
+                        <FileText className="h-5 w-5" />
+                        Medical Records ({studentMedicalInfo.medicalRecords.length})
+                      </h4>
+                      <div className="space-y-3 max-h-96 overflow-y-auto">
+                        {studentMedicalInfo.medicalRecords.map((record, idx) => (
+                          <div
+                            key={idx}
+                            className="bg-gray-50 border border-gray-200 rounded-lg p-4"
+                          >
+                            <div className="flex justify-between items-start mb-2">
+                              <div className="flex-1">
+                                <p className="font-medium text-gray-800">
+                                  {record.symptoms?.join(", ") || "Medical Consultation"}
+                                </p>
+                                <p className="text-sm text-gray-500 mt-1">
+                                  {new Date(record.completedAt || record.visitDate || record.createdAt).toLocaleDateString()}
+                                </p>
+                                {record.assignedDoctor && (
+                                  <p className="text-xs text-gray-600 mt-1">
+                                    Doctor: {record.assignedDoctor.name || "Unknown"}
+                                  </p>
+                                )}
+                              </div>
+                              <span className={`px-3 py-1 rounded-full text-xs font-medium whitespace-nowrap ml-2 ${
+                                record.severity === "red" ? "bg-red-100 text-red-700" :
+                                record.severity === "orange" ? "bg-orange-100 text-orange-700" :
+                                "bg-green-100 text-green-700"
+                              }`}>
+                                {record.severity?.toUpperCase() || "NORMAL"}
+                              </span>
+                            </div>
+                            {record.symptomDescription && (
+                              <div className="mt-2">
+                                <p className="text-sm text-gray-700">
+                                  <strong>Description:</strong> {record.symptomDescription}
+                                </p>
+                              </div>
+                            )}
+                            {record.doctorNotes && (
+                              <div className="mt-2">
+                                <p className="text-sm text-gray-700">
+                                  <strong>Doctor Notes:</strong> {record.doctorNotes}
+                                </p>
+                              </div>
+                            )}
+                            {record.prescription && (
+                              <div className="mt-2 p-2 bg-blue-50 rounded text-sm text-blue-900">
+                                <strong>Prescription:</strong> {record.prescription}
+                              </div>
+                            )}
+                            {record.advice && (
+                              <div className="mt-2 p-2 bg-green-50 rounded text-sm text-green-900">
+                                <strong>Advice:</strong> {record.advice}
+                              </div>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Medical Documents */}
+                  {studentMedicalInfo.documents && studentMedicalInfo.documents.length > 0 && (
+                    <div>
+                      <h4 className="text-lg font-semibold text-gray-800 mb-3 flex items-center gap-2">
+                        <FileCheck className="h-5 w-5" />
+                        Medical Documents ({studentMedicalInfo.documents.length})
+                      </h4>
+                      <div className="space-y-3 max-h-96 overflow-y-auto">
+                        {studentMedicalInfo.documents.map((doc, idx) => (
+                          <div
+                            key={idx}
+                            className="bg-gray-50 border border-gray-200 rounded-lg p-4"
+                          >
+                            <div className="flex justify-between items-start">
+                              <div className="flex-1">
+                                <p className="font-medium text-gray-800 flex items-center gap-2">
+                                  <FileText className="h-4 w-4 text-blue-500" />
+                                  {doc.originalName || "Medical Document"}
+                                </p>
+                                <p className="text-xs text-gray-500 mt-1">
+                                  {doc.fileSize ? `${(doc.fileSize / 1024).toFixed(2)} KB` : ""} • {new Date(doc.uploadDate || doc.createdAt).toLocaleDateString()}
+                                </p>
+                                {doc.analyzedData?.documentType && (
+                                  <p className="text-xs text-gray-600 mt-1">
+                                    Type: {doc.analyzedData.documentType}
+                                  </p>
+                                )}
+                                {doc.analyzedData?.bloodGroup && (
+                                  <p className="text-xs text-gray-600 mt-1">
+                                    Blood Group: {doc.analyzedData.bloodGroup}
+                                  </p>
+                                )}
+                              </div>
+                              {doc.filename && (
+                                <a
+                                  href={`http://localhost:5000/uploads/medical-documents/${doc.filename}`}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="px-3 py-1.5 bg-blue-500 text-white rounded text-xs font-medium hover:bg-blue-600 inline-flex items-center gap-1 ml-2"
+                                >
+                                  <Download className="h-3 w-3" />
+                                  View
+                                </a>
+                              )}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Diet Recommendations */}
+                  {studentMedicalInfo.dietRecommendations && studentMedicalInfo.dietRecommendations.length > 0 && (
+                    <div>
+                      <h4 className="text-lg font-semibold text-gray-800 mb-3 flex items-center gap-2">
+                        <Utensils className="h-5 w-5" />
+                        Diet Recommendations ({studentMedicalInfo.dietRecommendations.length})
+                      </h4>
+                      <div className="space-y-3">
+                        {studentMedicalInfo.dietRecommendations.map((diet, idx) => (
+                          <div
+                            key={idx}
+                            className="bg-gray-50 border border-gray-200 rounded-lg p-4"
+                          >
+                            <div className="flex justify-between items-start mb-2">
+                              <p className="font-medium text-gray-800">
+                                {diet.dietType ? diet.dietType.charAt(0).toUpperCase() + diet.dietType.slice(1) : "Diet Plan"}
+                              </p>
+                              {diet.startDate && (
+                                <p className="text-sm text-gray-500">
+                                  From {new Date(diet.startDate).toLocaleDateString()}
+                                  {diet.endDate && ` to ${new Date(diet.endDate).toLocaleDateString()}`}
+                                </p>
+                              )}
+                            </div>
+                            {diet.specialInstructions && (
+                              <p className="text-sm text-gray-700 mt-2">
+                                <strong>Instructions:</strong> {diet.specialInstructions}
+                              </p>
+                            )}
+                            {diet.restrictions && (
+                              <p className="text-sm text-gray-700 mt-1">
+                                <strong>Restrictions:</strong> {diet.restrictions}
+                              </p>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Medical Leaves */}
+                  {studentMedicalInfo.medicalLeaves && studentMedicalInfo.medicalLeaves.length > 0 && (
+                    <div>
+                      <h4 className="text-lg font-semibold text-gray-800 mb-3 flex items-center gap-2">
+                        <Calendar className="h-5 w-5" />
+                        Medical Leaves ({studentMedicalInfo.medicalLeaves.length})
+                      </h4>
+                      <div className="space-y-3">
+                        {studentMedicalInfo.medicalLeaves.map((leave, idx) => (
+                          <div
+                            key={idx}
+                            className="bg-gray-50 border border-gray-200 rounded-lg p-4"
+                          >
+                            <div className="flex justify-between items-start mb-2">
+                              <p className="font-medium text-gray-800">
+                                {new Date(leave.startDate).toLocaleDateString()} - {new Date(leave.endDate).toLocaleDateString()}
+                              </p>
+                            </div>
+                            {leave.reason && (
+                              <p className="text-sm text-gray-600">
+                                <strong>Reason:</strong> {leave.reason}
+                              </p>
+                            )}
+                            {leave.notes && (
+                              <p className="text-sm text-gray-600 mt-1">
+                                <strong>Notes:</strong> {leave.notes}
+                              </p>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* No Records Message */}
+                  {(!studentMedicalInfo.summary &&
+                    (!studentMedicalInfo.medicalRecords ||
+                      studentMedicalInfo.medicalRecords.length === 0) &&
+                    (!studentMedicalInfo.documents ||
+                      studentMedicalInfo.documents.length === 0) &&
+                    (!studentMedicalInfo.medicalLeaves ||
+                      studentMedicalInfo.medicalLeaves.length === 0) &&
+                    (!studentMedicalInfo.dietRecommendations ||
+                      studentMedicalInfo.dietRecommendations.length === 0)) && (
+                    <div className="text-center py-12 text-gray-500">
+                      <FileText className="h-16 w-16 mx-auto mb-4 opacity-50" />
+                      <p>No medical records available</p>
+                    </div>
+                  )}
                 </div>
               </div>
             </div>

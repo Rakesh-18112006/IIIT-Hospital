@@ -274,8 +274,9 @@ export const queryMedicalBot = async (req, res) => {
       });
     }
 
-    // Build comprehensive context from all sources
+    // Build comprehensive context from all sources with source tracking
     let contextParts = [];
+    const sourceMap = new Map(); // Track sources for proper referencing
 
     // 1. Prescriptions (prioritize - most recent first)
     if (prescriptions.length > 0) {
@@ -285,91 +286,192 @@ export const queryMedicalBot = async (req, res) => {
           const timingStr = med.timings && med.timings.length > 0 
             ? ` (Take: ${med.timings.join(', ')})` 
             : '';
-          return `- ${med.name}${timingStr}`;
+          const dosageStr = med.dosage ? ` - Dosage: ${med.dosage}` : '';
+          const frequencyStr = med.frequency ? ` - Frequency: ${med.frequency}` : '';
+          const durationStr = med.duration ? ` - Duration: ${med.duration}` : '';
+          return `- ${med.name}${timingStr}${dosageStr}${frequencyStr}${durationStr}`;
         }).join('\n');
 
+        const prescriptionDate = new Date(prescription.createdAt).toLocaleDateString();
+        const sourceLabel = `Prescription #${index + 1} (Date: ${prescriptionDate})`;
+        
         contextParts.push(`
-Prescription #${index + 1} (Date: ${new Date(prescription.createdAt).toLocaleDateString()})
+${sourceLabel}
 Doctor: Dr. ${prescription.doctor?.name || prescription.doctorId?.name || "Unknown"}
 Diagnosis: ${prescription.diagnosis || "N/A"}
+Symptoms: ${prescription.symptoms?.join(", ") || "N/A"}
 Medications:
 ${medList || "None"}
 Advice: ${prescription.advice || "None"}
 Notes: ${prescription.notes || "None"}
 ---`);
+        
+        // Store source mapping
+        sourceMap.set(sourceLabel.toLowerCase(), {
+          type: 'prescription',
+          id: prescription._id.toString(),
+          name: `Prescription from ${prescriptionDate}`,
+          date: prescriptionDate
+        });
       });
     }
 
-    // 2. Patient Records (recent consultations)
+    // 2. Patient Records (recent consultations/medical reports)
     if (patientRecords.length > 0) {
-      contextParts.push("\n=== MEDICAL CONSULTATIONS (Most Recent First) ===");
+      contextParts.push("\n=== MEDICAL CONSULTATIONS & REPORTS (Most Recent First) ===");
       patientRecords.slice(0, 10).forEach((record, index) => {
+        const recordDate = new Date(record.completedAt || record.visitDate).toLocaleDateString();
+        const sourceLabel = `Consultation #${index + 1} (Date: ${recordDate})`;
+        
         contextParts.push(`
-Consultation #${index + 1} (Date: ${new Date(record.completedAt || record.visitDate).toLocaleDateString()})
+${sourceLabel}
 Doctor: ${record.assignedDoctor?.name || "Unknown"}
+Department: ${record.assignedDoctor?.department || "N/A"}
 Symptoms: ${record.symptoms?.join(", ") || "N/A"}
 Description: ${record.symptomDescription || "N/A"}
 Prescription: ${record.prescription || "None"}
 Advice: ${record.advice || "None"}
 Doctor Notes: ${record.doctorNotes || "None"}
+Suggested Tests: ${record.suggestedTests?.join(", ") || "None"}
+Vitals: ${record.vitals ? `Temp: ${record.vitals.temperature || 'N/A'}°C, BP: ${record.vitals.bloodPressure || 'N/A'}, HR: ${record.vitals.heartRate || 'N/A'}, SpO2: ${record.vitals.oxygenLevel || 'N/A'}%` : "Not recorded"}
 Severity: ${record.severity || "N/A"}
+Referral: ${record.referral ? `${record.referral.hospital} - ${record.referral.reason}` : "None"}
 ---`);
+        
+        // Store source mapping
+        sourceMap.set(sourceLabel.toLowerCase(), {
+          type: 'patient_record',
+          id: record._id.toString(),
+          name: `Consultation from ${recordDate}`,
+          date: recordDate
+        });
       });
     }
 
-    // 3. Medical Documents (uploaded documents)
+    // 3. Medical Documents (uploaded documents - include full extracted text)
     if (documents.length > 0) {
       contextParts.push("\n=== UPLOADED MEDICAL DOCUMENTS ===");
       documents.forEach((doc, index) => {
-        contextParts.push(`
-Document ${index + 1}: ${doc.originalName || "Medical Document"} (Uploaded: ${new Date(
-          doc.uploadDate
-        ).toLocaleDateString()})
-Type: ${doc.analyzedData?.documentType || "Unknown"}
-Blood Group: ${doc.analyzedData?.bloodGroup || "Not found"}
-Conditions: ${doc.analyzedData?.conditions?.join(", ") || "None"}
-Medications: ${doc.analyzedData?.medications?.join(", ") || "None"}
-Allergies: ${doc.analyzedData?.allergies?.join(", ") || "None"}
-Test Results: ${
-          doc.analyzedData?.testResults
-            ?.map((t) => `${t.testName}: ${t.value} ${t.unit || ""}`)
-            .join(", ") || "None"
+        const docName = doc.originalName || "Medical Document";
+        const uploadDate = new Date(doc.uploadDate).toLocaleDateString();
+        const sourceLabel = `Document ${index + 1}: ${docName}`;
+        
+        // Build document context - include both analyzed data and extracted text
+        let docContext = `
+${sourceLabel} (Uploaded: ${uploadDate})
+Document Type: ${doc.analyzedData?.documentType || "Unknown"}
+`;
+        
+        // Include structured analyzed data
+        if (doc.analyzedData) {
+          if (doc.analyzedData.bloodGroup) docContext += `Blood Group: ${doc.analyzedData.bloodGroup}\n`;
+          if (doc.analyzedData.conditions?.length > 0) docContext += `Medical Conditions: ${doc.analyzedData.conditions.join(", ")}\n`;
+          if (doc.analyzedData.medications?.length > 0) docContext += `Medications: ${doc.analyzedData.medications.join(", ")}\n`;
+          if (doc.analyzedData.allergies?.length > 0) docContext += `Allergies: ${doc.analyzedData.allergies.join(", ")}\n`;
+          if (doc.analyzedData.vaccinations?.length > 0) docContext += `Vaccinations: ${doc.analyzedData.vaccinations.join(", ")}\n`;
+          if (doc.analyzedData.testResults?.length > 0) {
+            docContext += `Test Results:\n${doc.analyzedData.testResults.map(t => `  - ${t.testName}: ${t.value} ${t.unit || ""}${t.date ? ` (Date: ${t.date})` : ""}`).join('\n')}\n`;
+          }
+          if (doc.analyzedData.doctorName) docContext += `Doctor: ${doc.analyzedData.doctorName}\n`;
+          if (doc.analyzedData.hospitalName) docContext += `Hospital: ${doc.analyzedData.hospitalName}\n`;
+          if (doc.analyzedData.documentDate) docContext += `Document Date: ${doc.analyzedData.documentDate}\n`;
+          if (doc.analyzedData.summary) docContext += `Summary: ${doc.analyzedData.summary}\n`;
         }
-Summary: ${doc.analyzedData?.summary || "No summary"}
----`);
+        
+        // Include full extracted text for comprehensive querying (limit to 2000 chars to avoid token limits)
+        if (doc.extractedText && doc.extractedText.trim().length > 0) {
+          const extractedText = doc.extractedText.trim();
+          const truncatedText = extractedText.length > 2000 
+            ? extractedText.substring(0, 2000) + "... (truncated)"
+            : extractedText;
+          docContext += `\nFull Document Content:\n${truncatedText}\n`;
+        }
+        
+        docContext += '---';
+        contextParts.push(docContext);
+        
+        // Store source mapping
+        sourceMap.set(docName.toLowerCase(), {
+          type: 'document',
+          id: doc._id.toString(),
+          name: docName,
+          date: uploadDate
+        });
       });
     }
 
     const fullContext = contextParts.join("\n");
 
-    // Enhanced prompt with medication-specific instructions
-    const prompt = `You are a helpful medical records assistant. Answer the user's question based on their complete medical history including prescriptions, consultations, and uploaded documents.
+    // Enhanced, comprehensive prompt with better instructions
+    const prompt = `You are an expert medical records assistant AI. Your role is to help users understand their medical history by answering questions based on their complete medical records including prescriptions from doctors, medical consultations/reports, and uploaded medical documents.
 
 PATIENT'S COMPLETE MEDICAL RECORDS:
 ${fullContext}
 
 USER'S QUESTION: ${question}
 
-IMPORTANT INSTRUCTIONS:
-1. PRIORITIZE RECENT INFORMATION: When answering about medications, always mention the most recent prescription first
-2. For "latest medication" or "current medication" questions, list medications from the most recent prescription (Prescription #1)
-3. Include timing information (morning, evening, night) when available
-4. If multiple prescriptions exist, mention which is the most recent
-5. For medication questions, format as: Medicine Name (Timing: morning/evening/night)
-6. Always mention the source (Prescription date, Consultation date, or Document name)
-7. If information is not found, say "This information was not found in your medical records"
-8. Be concise but comprehensive
-9. For medication-related questions, prioritize prescription data over uploaded documents
+CRITICAL INSTRUCTIONS FOR ANSWERING:
 
-RESPONSE FORMAT:
-Answer: [your detailed answer]
-Source: [Prescription date, Consultation date, or Document name]`;
+1. COMPREHENSIVE SEARCH: Search through ALL available sources (prescriptions, consultations, uploaded documents) to find the answer. Do not limit yourself to just one section.
+
+2. PRIORITIZE RECENCY: When multiple sources contain similar information, prioritize the most recent data:
+   - For medications: Use the most recent prescription first
+   - For test results: Mention the most recent test values
+   - For conditions: Consider the latest diagnosis/consultation
+
+3. MEDICATION INFORMATION: 
+   - Always include timing information (morning, noon, evening, night) when available
+   - Include dosage, frequency, and duration if present
+   - Format medications clearly: "Medicine Name (Take: morning, evening) - Dosage: X - Frequency: Y"
+   - When asked about "current" or "latest" medications, refer to Prescription #1 (most recent)
+
+4. TEST RESULTS & VITALS:
+   - Provide specific values with units when available
+   - Include dates for test results if mentioned
+   - Compare results across different dates when relevant
+
+5. COMPREHENSIVE ANSWERS:
+   - Answer questions about blood group, allergies, conditions, medications, test results, vaccinations
+   - Pull information from document content (extracted text) when structured data is incomplete
+   - Combine information from multiple sources when needed (e.g., allergies from document + recent prescription notes)
+
+6. SOURCE ATTRIBUTION:
+   - Always identify which source(s) your answer comes from
+   - Use the exact source label format (e.g., "Prescription #1", "Consultation #2", "Document 1: filename")
+   - If information comes from multiple sources, mention all relevant ones
+
+7. ACCURACY & CLARITY:
+   - Be specific and precise with medical information
+   - If information is not found, clearly state "This information was not found in your medical records"
+   - Do not make assumptions beyond what is in the records
+   - Use medical terminology appropriately but explain when needed
+
+8. DOCUMENT CONTENT UTILIZATION:
+   - When structured data (analyzedData) is incomplete, use the full extracted text from documents
+   - Look for information in the "Full Document Content" section
+   - Extract relevant details that may not be in the structured fields
+
+9. FORMATTING:
+   - Use clear, organized responses
+   - Use bullet points for lists (medications, symptoms, test results)
+   - Include dates when relevant
+   - Be concise but thorough
+
+10. RESPONSE STRUCTURE:
+    - Start with a direct answer to the question
+    - Provide relevant details and context
+    - Always end with source attribution
+
+RESPONSE FORMAT (strictly follow this format):
+Answer: [your comprehensive and detailed answer based on all available medical records]
+
+Source: [Exact source label from the records above, e.g., "Prescription #1 (Date: MM/DD/YYYY)" or "Document 1: filename" or "Consultation #2 (Date: MM/DD/YYYY)"]`;
 
     const completion = await client.chat.completions.create({
       messages: [{ role: "user", content: prompt }],
       model: "llama-3.3-70b-versatile",
       temperature: 0.1,
-      max_tokens: 800, // Increased for more detailed responses
+      max_tokens: 1500, // Increased for more detailed responses
     });
 
     const responseText = completion.choices[0]?.message?.content || "";
@@ -377,6 +479,8 @@ Source: [Prescription date, Consultation date, or Document name]`;
     // Parse answer and source from response
     let answer = responseText;
     let source = null;
+    let sourceType = null;
+    let sourceId = null;
 
     const answerMatch = responseText.match(/Answer:\s*(.+?)(?=Source:|$)/s);
     const sourceMatch = responseText.match(/Source:\s*(.+?)$/s);
@@ -390,18 +494,74 @@ Source: [Prescription date, Consultation date, or Document name]`;
     
     if (sourceMatch) {
       source = sourceMatch[1].trim();
+      
+      // Try to find the source in our map
+      const sourceKey = source.toLowerCase();
+      for (const [key, value] of sourceMap.entries()) {
+        if (sourceKey.includes(key) || key.includes(sourceKey.split('(')[0].trim())) {
+          sourceType = value.type;
+          sourceId = value.id;
+          source = value.name; // Use standardized source name
+          break;
+        }
+      }
+      
+      // If not found in map, try to infer from source text
+      if (!sourceType) {
+        const sourceLower = source.toLowerCase();
+        if (sourceLower.includes('prescription')) {
+          if (prescriptions.length > 0) {
+            sourceType = 'prescription';
+            sourceId = prescriptions[0]._id.toString();
+            source = `Prescription from ${new Date(prescriptions[0].createdAt).toLocaleDateString()}`;
+          }
+        } else if (sourceLower.includes('consultation')) {
+          if (patientRecords.length > 0) {
+            sourceType = 'patient_record';
+            sourceId = patientRecords[0]._id.toString();
+            source = `Consultation from ${new Date(patientRecords[0].completedAt || patientRecords[0].visitDate).toLocaleDateString()}`;
+          }
+        } else {
+          // Try to match document name
+          const matchedDoc = documents.find(doc => 
+            sourceLower.includes(doc.originalName?.toLowerCase() || '') ||
+            (doc.originalName?.toLowerCase() || '').includes(sourceLower.split(':')[0].trim())
+          );
+          if (matchedDoc) {
+            sourceType = 'document';
+            sourceId = matchedDoc._id.toString();
+            source = matchedDoc.originalName || "Medical Document";
+          } else if (documents.length > 0) {
+            sourceType = 'document';
+            sourceId = documents[0]._id.toString();
+            source = documents[0].originalName || "Medical Document";
+          }
+        }
+      }
     } else {
-      // Try to infer source from answer
-      if (prescriptions.length > 0 && (answer.toLowerCase().includes("prescription") || answer.toLowerCase().includes("medication"))) {
+      // Try to infer source from answer content if no explicit source
+      const answerLower = answer.toLowerCase();
+      if (prescriptions.length > 0 && (answerLower.includes("prescription") || answerLower.includes("medication") || answerLower.includes("medicine"))) {
+        sourceType = 'prescription';
+        sourceId = prescriptions[0]._id.toString();
         source = `Prescription from ${new Date(prescriptions[0].createdAt).toLocaleDateString()}`;
-      } else if (patientRecords.length > 0) {
+      } else if (patientRecords.length > 0 && (answerLower.includes("consultation") || answerLower.includes("doctor") || answerLower.includes("visit"))) {
+        sourceType = 'patient_record';
+        sourceId = patientRecords[0]._id.toString();
         source = `Consultation from ${new Date(patientRecords[0].completedAt || patientRecords[0].visitDate).toLocaleDateString()}`;
       } else if (documents.length > 0) {
+        sourceType = 'document';
+        sourceId = documents[0]._id.toString();
         source = documents[0].originalName || "Medical Document";
       }
     }
 
-    res.json({ answer, source });
+    res.json({ 
+      answer, 
+      source,
+      sourceType, // 'document', 'prescription', or 'patient_record'
+      sourceId    // ID for viewing the source
+    });
   } catch (error) {
     console.error("Medical bot query error:", error);
     res.status(500).json({ message: "Error processing your question", error: error.message });

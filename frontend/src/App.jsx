@@ -5,6 +5,7 @@ import {
   Navigate,
 } from "react-router-dom";
 import { AuthProvider } from "./context/AuthContext";
+import { SocketProvider } from "./context/SocketContext";
 import {
   ProtectedRoute,
   PublicRoute,
@@ -20,7 +21,8 @@ import MessDashboard from "./pages/MessDashboard";
 function App() {
   return (
     <AuthProvider>
-      <Router>
+      <SocketProvider>
+        <Router>
         <Routes>
           {/* Public Routes */}
           <Route
@@ -87,6 +89,7 @@ function App() {
           <Route path="*" element={<Navigate to="/login" replace />} />
         </Routes>
       </Router>
+      </SocketProvider>
     </AuthProvider>
   );
 }

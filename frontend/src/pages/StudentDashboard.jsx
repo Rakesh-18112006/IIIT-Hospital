@@ -1,7 +1,9 @@
 import { useState, useEffect, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
+import { useSocket } from "../context/SocketContext";
 import api from "../config/api";
+import AnnouncementCard from "../components/AnnouncementCard";
 import {
   FileText,
   Calendar,
@@ -39,6 +41,8 @@ import {
   Bell,
   Info,
   Download,
+  MessageSquare,
+  AlertTriangle,
 } from "lucide-react";
 
 const HOSTEL_BLOCKS = ["I1", "I2", "I3", "K1", "K2", "K3"];
@@ -79,6 +83,7 @@ const SYMPTOMS_LIST = [
 const StudentDashboard = () => {
   const { user, updateProfile, deleteAccount, logout } = useAuth();
   const navigate = useNavigate();
+  const socket = useSocket();
   const [activeTab, setActiveTab] = useState("submit");
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
@@ -129,6 +134,8 @@ const StudentDashboard = () => {
   const [uploadSuccess, setUploadSuccess] = useState("");
   const [medicalSummary, setMedicalSummary] = useState(null);
   const [viewingDocument, setViewingDocument] = useState(null);
+  const [viewingPrescription, setViewingPrescription] = useState(null);
+  const [viewingPatientRecord, setViewingPatientRecord] = useState(null);
   const fileInputRef = useRef(null);
 
   // Medical Analyzer Chat state
@@ -175,6 +182,16 @@ const StudentDashboard = () => {
   const [showDeleteQRConfirm, setShowDeleteQRConfirm] = useState(false);
   const [qrDeleteLoading, setQrDeleteLoading] = useState(false);
 
+  // Announcements and Emergency Chat state
+  const [announcements, setAnnouncements] = useState([]);
+  const [announcementsLoading, setAnnouncementsLoading] = useState(false);
+  const [emergencyChatRooms, setEmergencyChatRooms] = useState([]);
+  const [emergencyChatRoomsLoading, setEmergencyChatRoomsLoading] = useState(false);
+  const [selectedEmergencyChatRoom, setSelectedEmergencyChatRoom] = useState(null);
+  const [emergencyChatMessages, setEmergencyChatMessages] = useState([]);
+  const [emergencyNewMessage, setEmergencyNewMessage] = useState("");
+  const emergencyChatEndRef = useRef(null);
+
   useEffect(() => {
     fetchData();
     fetchProfile();
@@ -194,6 +211,12 @@ const StudentDashboard = () => {
     if (activeTab === "queue") {
       fetchDoctors();
       fetchMyAppointments();
+    }
+    if (activeTab === "announcements") {
+      fetchAnnouncements();
+    }
+    if (activeTab === "emergency-chat") {
+      fetchEmergencyChatRooms();
     }
   }, [activeTab]);
 
@@ -227,6 +250,136 @@ const StudentDashboard = () => {
       console.error("Error fetching medical summary:", error);
     }
   };
+
+  // Fetch announcements
+  const fetchAnnouncements = async () => {
+    setAnnouncementsLoading(true);
+    try {
+      const response = await api.get("/announcements/active");
+      setAnnouncements(response.data);
+    } catch (error) {
+      console.error("Error fetching announcements:", error);
+    } finally {
+      setAnnouncementsLoading(false);
+    }
+  };
+
+  // Fetch emergency chat rooms
+  const fetchEmergencyChatRooms = async () => {
+    setEmergencyChatRoomsLoading(true);
+    try {
+      const response = await api.get("/chat/rooms");
+      setEmergencyChatRooms(response.data);
+    } catch (error) {
+      console.error("Error fetching chat rooms:", error);
+    } finally {
+      setEmergencyChatRoomsLoading(false);
+    }
+  };
+
+  // React to announcement
+  const handleReactToAnnouncement = async (announcementId) => {
+    try {
+      const response = await api.post(`/announcements/${announcementId}/react`);
+      await fetchEmergencyChatRooms();
+      setActiveTab("emergency-chat");
+      // Find and select the new chat room
+      const roomsResponse = await api.get("/chat/rooms");
+      const room = roomsResponse.data.find(
+        (r) => r.announcement?._id === announcementId
+      );
+      if (room) {
+        setSelectedEmergencyChatRoom(room);
+        await fetchEmergencyChatMessages(room._id);
+        if (socket) {
+          socket.emit("join-room", room._id);
+        }
+      }
+    } catch (error) {
+      console.error("Error reacting to announcement:", error);
+      alert(error.response?.data?.message || "Error reacting to announcement");
+    }
+  };
+
+  // Fetch messages for a chat room
+  const fetchEmergencyChatMessages = async (roomId) => {
+    try {
+      const response = await api.get(`/chat/rooms/${roomId}/messages`);
+      setEmergencyChatMessages(response.data);
+    } catch (error) {
+      console.error("Error fetching messages:", error);
+    }
+  };
+
+  // Send message
+  const handleSendEmergencyMessage = async (e) => {
+    e.preventDefault();
+    if (!emergencyNewMessage.trim() || !selectedEmergencyChatRoom) return;
+
+    try {
+      await api.post(
+        `/chat/rooms/${selectedEmergencyChatRoom._id}/messages`,
+        { message: emergencyNewMessage }
+      );
+      setEmergencyNewMessage("");
+      await fetchEmergencyChatMessages(selectedEmergencyChatRoom._id);
+    } catch (error) {
+      console.error("Error sending message:", error);
+      alert("Error sending message");
+    }
+  };
+
+  // Handle medical access response
+  const handleRespondMedicalAccess = async (roomId, approved) => {
+    try {
+      const response = await api.post(
+        `/chat/rooms/${roomId}/respond-medical-access`,
+        { approved }
+      );
+      await fetchEmergencyChatMessages(roomId);
+      await fetchEmergencyChatRooms(); // Refresh to update medicalAccessGranted status
+      // Update selected room if it's the one we just responded to
+      if (selectedEmergencyChatRoom && selectedEmergencyChatRoom._id === roomId) {
+        const roomsResponse = await api.get("/chat/rooms");
+        const updatedRoom = roomsResponse.data.find((r) => r._id === roomId);
+        if (updatedRoom) {
+          setSelectedEmergencyChatRoom(updatedRoom);
+        }
+      }
+    } catch (error) {
+      console.error("Error responding to medical access:", error);
+      alert(error.response?.data?.message || "Error responding to medical access request");
+    }
+  };
+
+  // Socket.IO listeners for real-time updates
+  useEffect(() => {
+    if (!socket) return;
+
+    socket.on("new-announcement", (announcement) => {
+      setAnnouncements((prev) => [announcement, ...prev]);
+    });
+
+    socket.on("announcement-status-changed", (announcement) => {
+      setAnnouncements((prev) =>
+        prev.map((a) => (a._id === announcement._id ? announcement : a))
+      );
+      fetchEmergencyChatRooms();
+    });
+
+    socket.on("new-message", (message) => {
+      if (selectedEmergencyChatRoom && message.chatRoom === selectedEmergencyChatRoom._id) {
+        setEmergencyChatMessages((prev) => [...prev, message]);
+      }
+      fetchEmergencyChatRooms(); // Refresh to update unread counts
+    });
+
+    return () => {
+      socket.off("new-announcement");
+      socket.off("announcement-status-changed");
+      socket.off("new-message");
+    };
+  }, [socket, selectedEmergencyChatRoom]);
 
   // Notification Functions
   const fetchNotifications = async () => {
@@ -506,6 +659,44 @@ const StudentDashboard = () => {
     );
   };
 
+  const handleViewSource = async (sourceType, sourceId, sourceName) => {
+    try {
+      if (sourceType === "document" && sourceId) {
+        const response = await api.get(`/documents/${sourceId}`);
+        setViewingDocument(response.data);
+        setViewingPrescription(null);
+        setViewingPatientRecord(null);
+      } else if (sourceType === "prescription" && sourceId) {
+        const response = await api.get(`/prescriptions/${sourceId}`);
+        setViewingPrescription(response.data);
+        setViewingDocument(null);
+        setViewingPatientRecord(null);
+      } else if (sourceType === "patient_record" && sourceId) {
+        // Fetch patient records and find the one with matching ID
+        const response = await api.get("/patient/my-records");
+        const record = response.data.find(r => r._id === sourceId);
+        if (record) {
+          setViewingPatientRecord(record);
+          setViewingDocument(null);
+          setViewingPrescription(null);
+        } else {
+          alert("Record not found");
+        }
+      } else {
+        // Fallback: try to find document by name
+        const doc = findDocumentByName(sourceName);
+        if (doc) {
+          handleViewDocument(doc._id);
+        } else {
+          alert("Source not available");
+        }
+      }
+    } catch (error) {
+      console.error("Error viewing source:", error);
+      alert("Error loading source. Please try again.");
+    }
+  };
+
   const handleChatSubmit = async (e) => {
     e.preventDefault();
     if (!chatInput.trim() || chatLoading) return;
@@ -528,6 +719,8 @@ const StudentDashboard = () => {
         response.data.source !== "Not found in documents"
           ? response.data.source
           : null;
+      const sourceType = response.data.sourceType || null;
+      const sourceId = response.data.sourceId || null;
 
       setChatMessages((prev) => [
         ...prev,
@@ -535,6 +728,8 @@ const StudentDashboard = () => {
           role: "assistant",
           content: assistantMessage,
           source: sourceName,
+          sourceType: sourceType,
+          sourceId: sourceId,
         },
       ]);
     } catch (error) {
@@ -842,6 +1037,8 @@ const StudentDashboard = () => {
               icon: CalendarClock,
               hasNotification: notifications.length > 0,
             },
+            { id: "announcements", label: "Announcements", icon: AlertTriangle },
+            { id: "emergency-chat", label: "Emergency Chat", icon: MessageSquare },
             { id: "records", label: "My Records", icon: FileText },
             { id: "leaves", label: "Medical Leaves", icon: Calendar },
             { id: "diet", label: "Diet Plan", icon: Utensils },
@@ -934,6 +1131,8 @@ const StudentDashboard = () => {
               <h1 className="text-lg lg:text-xl font-bold text-gray-800">
                 {activeTab === "submit" && "Submit Symptoms"}
                 {activeTab === "queue" && "Book Appointment"}
+                {activeTab === "announcements" && "Announcements"}
+                {activeTab === "emergency-chat" && "Emergency Chat"}
                 {activeTab === "records" && "My Medical Records"}
                 {activeTab === "leaves" && "Medical Leaves"}
                 {activeTab === "diet" && "Diet Recommendations"}
@@ -1922,6 +2121,209 @@ const StudentDashboard = () => {
                 </div>
               )}
 
+              {/* Announcements Tab */}
+              {activeTab === "announcements" && (
+                <div className="space-y-4">
+                  <h2 className="text-xl font-semibold text-gray-800 mb-4">
+                    Emergency Announcements
+                  </h2>
+
+                  {announcementsLoading ? (
+                    <div className="text-center py-8">
+                      <Loader2 className="h-8 w-8 animate-spin text-sky-500 mx-auto" />
+                    </div>
+                  ) : announcements.length === 0 ? (
+                    <div className="text-center py-12 bg-gray-50 rounded-lg">
+                      <AlertTriangle className="h-12 w-12 text-gray-400 mx-auto mb-3" />
+                      <p className="text-gray-500">No active announcements</p>
+                    </div>
+                  ) : (
+                    <div className="space-y-4">
+                      {announcements.map((announcement) => (
+                        <AnnouncementCard
+                          key={announcement._id}
+                          announcement={announcement}
+                          userRole="student"
+                          onReact={handleReactToAnnouncement}
+                          socket={socket}
+                        />
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Emergency Chat Tab */}
+              {activeTab === "emergency-chat" && (
+                <div className="h-full flex flex-col">
+                  <h2 className="text-xl font-semibold text-gray-800 mb-4">
+                    Emergency Chat Rooms
+                  </h2>
+
+                  <div className="flex-1 grid grid-cols-1 lg:grid-cols-3 gap-4">
+                    {/* Chat Rooms List */}
+                    <div className="lg:col-span-1 border border-gray-200 rounded-lg overflow-hidden bg-white">
+                      <div className="p-3 border-b border-gray-200 bg-gray-50">
+                        <h3 className="font-semibold text-gray-800">Chat Rooms</h3>
+                      </div>
+                      <div className="overflow-y-auto" style={{ maxHeight: "calc(100vh - 300px)" }}>
+                        {emergencyChatRoomsLoading ? (
+                          <div className="p-4 text-center">
+                            <Loader2 className="h-6 w-6 animate-spin text-sky-500 mx-auto" />
+                          </div>
+                        ) : emergencyChatRooms.length === 0 ? (
+                          <div className="p-4 text-center text-gray-500 text-sm">
+                            No chat rooms yet. React to an announcement to start chatting.
+                          </div>
+                        ) : (
+                          emergencyChatRooms.map((room) => (
+                            <button
+                              key={room._id}
+                              onClick={async () => {
+                                setSelectedEmergencyChatRoom(room);
+                                await fetchEmergencyChatMessages(room._id);
+                                if (socket) {
+                                  socket.emit("join-room", room._id);
+                                }
+                              }}
+                              className={`w-full p-3 text-left border-b border-gray-100 hover:bg-gray-50 transition-colors ${
+                                selectedEmergencyChatRoom?._id === room._id
+                                  ? "bg-sky-50 border-l-4 border-l-sky-500"
+                                  : ""
+                              }`}
+                            >
+                              <div className="flex items-center justify-between mb-1">
+                                <span className="font-medium text-sm">
+                                  {room.announcement?.title || "Chat Room"}
+                                </span>
+                                {room.unreadCount > 0 && (
+                                  <span className="bg-red-500 text-white text-xs rounded-full w-5 h-5 flex items-center justify-center">
+                                    {room.unreadCount}
+                                  </span>
+                                )}
+                              </div>
+                              <div className="flex items-center gap-2 text-xs text-gray-500">
+                                <span
+                                  className={`px-2 py-0.5 rounded ${
+                                    room.status === "active"
+                                      ? "bg-green-100 text-green-700"
+                                      : room.status === "waiting"
+                                      ? "bg-yellow-100 text-yellow-700"
+                                      : "bg-gray-100 text-gray-700"
+                                  }`}
+                                >
+                                  {room.status}
+                                </span>
+                              </div>
+                              {room.lastMessage && (
+                                <p className="text-xs text-gray-500 mt-1 truncate">
+                                  {room.lastMessage.message}
+                                </p>
+                              )}
+                            </button>
+                          ))
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Chat Messages */}
+                    <div className="lg:col-span-2 flex flex-col border border-gray-200 rounded-lg bg-white">
+                      {selectedEmergencyChatRoom ? (
+                        <>
+                          <div className="p-4 border-b border-gray-200 bg-gray-50">
+                            <h3 className="font-semibold text-gray-800">
+                              {selectedEmergencyChatRoom.announcement?.title}
+                            </h3>
+                            <p className="text-sm text-gray-500">
+                              Status: <span className="capitalize">{selectedEmergencyChatRoom.status}</span>
+                              {selectedEmergencyChatRoom.status === "waiting" && (
+                                <span className="ml-2 text-yellow-600">- Waiting for doctor response</span>
+                              )}
+                            </p>
+                          </div>
+
+                          <div
+                            className="flex-1 overflow-y-auto p-4 space-y-4"
+                            style={{ maxHeight: "calc(100vh - 400px)" }}
+                          >
+                            {emergencyChatMessages.map((msg) => (
+                              <div
+                                key={msg._id}
+                                className={`flex ${
+                                  msg.sender._id === user?._id ? "justify-end" : "justify-start"
+                                }`}
+                              >
+                                <div
+                                  className={`max-w-[70%] rounded-lg p-3 ${
+                                    msg.sender._id === user?._id
+                                      ? "bg-sky-500 text-white"
+                                      : msg.messageType === "system" || msg.messageType === "medical_access_request" || msg.messageType === "medical_access_granted" || msg.messageType === "medical_access_denied"
+                                      ? "bg-gray-200 text-gray-700 text-center mx-auto"
+                                      : "bg-gray-100 text-gray-800"
+                                  }`}
+                                >
+                                  {msg.messageType !== "system" && msg.messageType !== "medical_access_request" && msg.messageType !== "medical_access_granted" && msg.messageType !== "medical_access_denied" && (
+                                    <p className="text-xs font-medium mb-1 opacity-80">
+                                      {msg.sender.name}
+                                    </p>
+                                  )}
+                                  <p className="text-sm whitespace-pre-wrap">{msg.message}</p>
+                                  {msg.messageType === "medical_access_request" && selectedEmergencyChatRoom && !selectedEmergencyChatRoom.medicalAccessGranted && (
+                                    <div className="flex gap-2 justify-center mt-3">
+                                      <button
+                                        onClick={() => handleRespondMedicalAccess(selectedEmergencyChatRoom._id, true)}
+                                        className="px-4 py-2 bg-green-500 text-white rounded-lg hover:bg-green-600 transition-colors text-sm font-medium"
+                                      >
+                                        Allow Access
+                                      </button>
+                                      <button
+                                        onClick={() => handleRespondMedicalAccess(selectedEmergencyChatRoom._id, false)}
+                                        className="px-4 py-2 bg-red-500 text-white rounded-lg hover:bg-red-600 transition-colors text-sm font-medium"
+                                      >
+                                        Deny Access
+                                      </button>
+                                    </div>
+                                  )}
+                                  <p className="text-xs opacity-70 mt-1">
+                                    {new Date(msg.createdAt).toLocaleTimeString()}
+                                  </p>
+                                </div>
+                              </div>
+                            ))}
+                            <div ref={emergencyChatEndRef} />
+                          </div>
+
+                          {selectedEmergencyChatRoom.status !== "closed" && (
+                            <form
+                              onSubmit={handleSendEmergencyMessage}
+                              className="p-4 border-t border-gray-200 flex gap-2"
+                            >
+                              <input
+                                type="text"
+                                value={emergencyNewMessage}
+                                onChange={(e) => setEmergencyNewMessage(e.target.value)}
+                                placeholder="Type a message..."
+                                className="flex-1 px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-sky-500 focus:border-transparent outline-none"
+                              />
+                              <button
+                                type="submit"
+                                className="px-4 py-2 bg-sky-500 text-white rounded-lg hover:bg-sky-600 transition-colors"
+                              >
+                                <Send className="h-5 w-5" />
+                              </button>
+                            </form>
+                          )}
+                        </>
+                      ) : (
+                        <div className="flex-1 flex items-center justify-center text-gray-500">
+                          Select a chat room to start messaging
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              )}
+
               {/* Records Tab */}
               {activeTab === "records" && (
                 <div>
@@ -2410,10 +2812,19 @@ const StudentDashboard = () => {
                                     <span>Source: {msg.source}</span>
                                     <button
                                       onClick={() => {
-                                        const doc = findDocumentByName(
-                                          msg.source
-                                        );
-                                        if (doc) handleViewDocument(doc._id);
+                                        if (msg.sourceType && msg.sourceId) {
+                                          handleViewSource(
+                                            msg.sourceType,
+                                            msg.sourceId,
+                                            msg.source
+                                          );
+                                        } else {
+                                          // Fallback: try to find document by name
+                                          const doc = findDocumentByName(
+                                            msg.source
+                                          );
+                                          if (doc) handleViewDocument(doc._id);
+                                        }
                                       }}
                                       className="ml-1 px-2 py-0.5 bg-sky-100 text-sky-600 rounded hover:bg-sky-200 transition-colors flex items-center gap-1"
                                     >
@@ -2730,6 +3141,444 @@ const StudentDashboard = () => {
                           <button
                             onClick={() => setViewingDocument(null)}
                             className="px-4 py-2 bg-sky-500 text-white rounded-lg hover:bg-sky-600 transition-colors"
+                          >
+                            Close
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Prescription View Modal */}
+                  {viewingPrescription && (
+                    <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
+                      <div className="bg-white rounded-xl w-full max-w-3xl max-h-[90vh] overflow-hidden flex flex-col">
+                        {/* Modal Header */}
+                        <div className="p-4 border-b border-gray-200 flex items-center justify-between">
+                          <div className="flex items-center gap-3">
+                            <div className="w-10 h-10 bg-purple-100 rounded-lg flex items-center justify-center">
+                              <FileText className="h-5 w-5 text-purple-600" />
+                            </div>
+                            <div>
+                              <h3 className="font-semibold text-gray-800">
+                                Prescription
+                              </h3>
+                              <p className="text-xs text-gray-500">
+                                Date:{" "}
+                                {new Date(
+                                  viewingPrescription.createdAt
+                                ).toLocaleDateString()}
+                              </p>
+                            </div>
+                          </div>
+                          <button
+                            onClick={() => setViewingPrescription(null)}
+                            className="p-2 hover:bg-gray-100 rounded-lg transition-colors"
+                          >
+                            <X className="h-5 w-5 text-gray-500" />
+                          </button>
+                        </div>
+
+                        {/* Modal Content */}
+                        <div className="flex-1 overflow-y-auto p-4 space-y-4">
+                          {/* Doctor Info */}
+                          <div className="grid grid-cols-2 gap-3">
+                            <div className="bg-gray-50 p-3 rounded-lg">
+                              <p className="text-xs text-gray-500">Doctor</p>
+                              <p className="font-medium text-gray-800">
+                                Dr.{" "}
+                                {viewingPrescription.doctorId?.name ||
+                                  "Unknown"}
+                              </p>
+                            </div>
+                            <div className="bg-gray-50 p-3 rounded-lg">
+                              <p className="text-xs text-gray-500">
+                                Department
+                              </p>
+                              <p className="font-medium text-gray-800">
+                                {viewingPrescription.doctorId?.department ||
+                                  "N/A"}
+                              </p>
+                            </div>
+                          </div>
+
+                          {/* Diagnosis */}
+                          {viewingPrescription.diagnosis && (
+                            <div className="bg-yellow-50 p-3 rounded-lg border-l-4 border-yellow-400">
+                              <p className="text-xs text-yellow-600 mb-1">
+                                Diagnosis
+                              </p>
+                              <p className="text-sm text-gray-700">
+                                {viewingPrescription.diagnosis}
+                              </p>
+                            </div>
+                          )}
+
+                          {/* Symptoms */}
+                          {viewingPrescription.symptoms?.length > 0 && (
+                            <div>
+                              <p className="text-xs text-gray-500 mb-2">
+                                Symptoms
+                              </p>
+                              <div className="flex flex-wrap gap-2">
+                                {viewingPrescription.symptoms.map(
+                                  (symptom, i) => (
+                                    <span
+                                      key={i}
+                                      className="px-2 py-1 bg-blue-100 text-blue-700 rounded text-sm"
+                                    >
+                                      {symptom}
+                                    </span>
+                                  )
+                                )}
+                              </div>
+                            </div>
+                          )}
+
+                          {/* Medications */}
+                          {viewingPrescription.medicines?.length > 0 && (
+                            <div>
+                              <p className="text-xs text-gray-500 mb-2">
+                                Medications
+                              </p>
+                              <div className="space-y-2">
+                                {viewingPrescription.medicines.map(
+                                  (med, i) => (
+                                    <div
+                                      key={i}
+                                      className="bg-purple-50 p-3 rounded-lg border-l-4 border-purple-400"
+                                    >
+                                      <p className="font-semibold text-gray-800">
+                                        {med.name}
+                                      </p>
+                                      {med.dosage && (
+                                        <p className="text-xs text-gray-600 mt-1">
+                                          Dosage: {med.dosage}
+                                        </p>
+                                      )}
+                                      {med.frequency && (
+                                        <p className="text-xs text-gray-600">
+                                          Frequency: {med.frequency}
+                                        </p>
+                                      )}
+                                      {med.duration && (
+                                        <p className="text-xs text-gray-600">
+                                          Duration: {med.duration}
+                                        </p>
+                                      )}
+                                      {med.timings?.length > 0 && (
+                                        <div className="mt-2 flex flex-wrap gap-1">
+                                          {med.timings.map((timing, idx) => (
+                                            <span
+                                              key={idx}
+                                              className="px-2 py-0.5 bg-purple-200 text-purple-700 rounded text-xs font-medium"
+                                            >
+                                              {timing === "morning"
+                                                ? "🌅 Morning"
+                                                : timing === "evening"
+                                                ? "🌆 Evening"
+                                                : timing === "night"
+                                                ? "🌙 Night"
+                                                : timing}
+                                            </span>
+                                          ))}
+                                        </div>
+                                      )}
+                                      {med.instructions && (
+                                        <p className="text-xs text-gray-600 mt-1 italic">
+                                          {med.instructions}
+                                        </p>
+                                      )}
+                                    </div>
+                                  )
+                                )}
+                              </div>
+                            </div>
+                          )}
+
+                          {/* Advice */}
+                          {viewingPrescription.advice && (
+                            <div className="bg-green-50 p-3 rounded-lg border-l-4 border-green-400">
+                              <p className="text-xs text-green-600 mb-1">
+                                Advice
+                              </p>
+                              <p className="text-sm text-gray-700 whitespace-pre-wrap">
+                                {viewingPrescription.advice}
+                              </p>
+                            </div>
+                          )}
+
+                          {/* Notes */}
+                          {viewingPrescription.notes && (
+                            <div className="bg-gray-50 p-3 rounded-lg">
+                              <p className="text-xs text-gray-500 mb-1">
+                                Doctor Notes
+                              </p>
+                              <p className="text-sm text-gray-700 whitespace-pre-wrap">
+                                {viewingPrescription.notes}
+                              </p>
+                            </div>
+                          )}
+                        </div>
+
+                        {/* Modal Footer */}
+                        <div className="p-4 border-t border-gray-200 flex justify-end">
+                          <button
+                            onClick={() => setViewingPrescription(null)}
+                            className="px-4 py-2 bg-purple-500 text-white rounded-lg hover:bg-purple-600 transition-colors"
+                          >
+                            Close
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Patient Record View Modal */}
+                  {viewingPatientRecord && (
+                    <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
+                      <div className="bg-white rounded-xl w-full max-w-3xl max-h-[90vh] overflow-hidden flex flex-col">
+                        {/* Modal Header */}
+                        <div className="p-4 border-b border-gray-200 flex items-center justify-between">
+                          <div className="flex items-center gap-3">
+                            <div className="w-10 h-10 bg-green-100 rounded-lg flex items-center justify-center">
+                              <Stethoscope className="h-5 w-5 text-green-600" />
+                            </div>
+                            <div>
+                              <h3 className="font-semibold text-gray-800">
+                                Medical Consultation Report
+                              </h3>
+                              <p className="text-xs text-gray-500">
+                                Date:{" "}
+                                {new Date(
+                                  viewingPatientRecord.completedAt ||
+                                    viewingPatientRecord.visitDate
+                                ).toLocaleDateString()}
+                              </p>
+                            </div>
+                          </div>
+                          <button
+                            onClick={() => setViewingPatientRecord(null)}
+                            className="p-2 hover:bg-gray-100 rounded-lg transition-colors"
+                          >
+                            <X className="h-5 w-5 text-gray-500" />
+                          </button>
+                        </div>
+
+                        {/* Modal Content */}
+                        <div className="flex-1 overflow-y-auto p-4 space-y-4">
+                          {/* Doctor Info */}
+                          <div className="grid grid-cols-2 gap-3">
+                            <div className="bg-gray-50 p-3 rounded-lg">
+                              <p className="text-xs text-gray-500">Doctor</p>
+                              <p className="font-medium text-gray-800">
+                                {viewingPatientRecord.assignedDoctor?.name ||
+                                  "Unknown"}
+                              </p>
+                            </div>
+                            <div className="bg-gray-50 p-3 rounded-lg">
+                              <p className="text-xs text-gray-500">
+                                Department
+                              </p>
+                              <p className="font-medium text-gray-800">
+                                {viewingPatientRecord.assignedDoctor
+                                  ?.department || "N/A"}
+                              </p>
+                            </div>
+                          </div>
+
+                          {/* Symptoms */}
+                          {viewingPatientRecord.symptoms?.length > 0 && (
+                            <div>
+                              <p className="text-xs text-gray-500 mb-2">
+                                Symptoms
+                              </p>
+                              <div className="flex flex-wrap gap-2">
+                                {viewingPatientRecord.symptoms.map(
+                                  (symptom, i) => (
+                                    <span
+                                      key={i}
+                                      className="px-2 py-1 bg-red-100 text-red-700 rounded text-sm"
+                                    >
+                                      {symptom}
+                                    </span>
+                                  )
+                                )}
+                              </div>
+                            </div>
+                          )}
+
+                          {/* Symptom Description */}
+                          {viewingPatientRecord.symptomDescription && (
+                            <div className="bg-yellow-50 p-3 rounded-lg border-l-4 border-yellow-400">
+                              <p className="text-xs text-yellow-600 mb-1">
+                                Description
+                              </p>
+                              <p className="text-sm text-gray-700">
+                                {viewingPatientRecord.symptomDescription}
+                              </p>
+                            </div>
+                          )}
+
+                          {/* Vitals */}
+                          {viewingPatientRecord.vitals && (
+                            <div className="grid grid-cols-2 gap-3">
+                              {viewingPatientRecord.vitals.temperature && (
+                                <div className="bg-blue-50 p-3 rounded-lg">
+                                  <p className="text-xs text-blue-600">
+                                    Temperature
+                                  </p>
+                                  <p className="font-medium text-gray-800">
+                                    {viewingPatientRecord.vitals.temperature}°C
+                                  </p>
+                                </div>
+                              )}
+                              {viewingPatientRecord.vitals.bloodPressure && (
+                                <div className="bg-blue-50 p-3 rounded-lg">
+                                  <p className="text-xs text-blue-600">
+                                    Blood Pressure
+                                  </p>
+                                  <p className="font-medium text-gray-800">
+                                    {
+                                      viewingPatientRecord.vitals
+                                        .bloodPressure
+                                    }
+                                  </p>
+                                </div>
+                              )}
+                              {viewingPatientRecord.vitals.heartRate && (
+                                <div className="bg-blue-50 p-3 rounded-lg">
+                                  <p className="text-xs text-blue-600">
+                                    Heart Rate
+                                  </p>
+                                  <p className="font-medium text-gray-800">
+                                    {viewingPatientRecord.vitals.heartRate}{" "}
+                                    bpm
+                                  </p>
+                                </div>
+                              )}
+                              {viewingPatientRecord.vitals.oxygenLevel && (
+                                <div className="bg-blue-50 p-3 rounded-lg">
+                                  <p className="text-xs text-blue-600">
+                                    Oxygen Level
+                                  </p>
+                                  <p className="font-medium text-gray-800">
+                                    {
+                                      viewingPatientRecord.vitals
+                                        .oxygenLevel
+                                    }
+                                    %
+                                  </p>
+                                </div>
+                              )}
+                            </div>
+                          )}
+
+                          {/* Prescription */}
+                          {viewingPatientRecord.prescription && (
+                            <div className="bg-purple-50 p-3 rounded-lg border-l-4 border-purple-400">
+                              <p className="text-xs text-purple-600 mb-1">
+                                Prescription
+                              </p>
+                              <p className="text-sm text-gray-700 whitespace-pre-wrap">
+                                {viewingPatientRecord.prescription}
+                              </p>
+                            </div>
+                          )}
+
+                          {/* Suggested Tests */}
+                          {viewingPatientRecord.suggestedTests?.length > 0 && (
+                            <div>
+                              <p className="text-xs text-gray-500 mb-2">
+                                Suggested Tests
+                              </p>
+                              <div className="flex flex-wrap gap-2">
+                                {viewingPatientRecord.suggestedTests.map(
+                                  (test, i) => (
+                                    <span
+                                      key={i}
+                                      className="px-2 py-1 bg-indigo-100 text-indigo-700 rounded text-sm"
+                                    >
+                                      {test}
+                                    </span>
+                                  )
+                                )}
+                              </div>
+                            </div>
+                          )}
+
+                          {/* Advice */}
+                          {viewingPatientRecord.advice && (
+                            <div className="bg-green-50 p-3 rounded-lg border-l-4 border-green-400">
+                              <p className="text-xs text-green-600 mb-1">
+                                Advice
+                              </p>
+                              <p className="text-sm text-gray-700 whitespace-pre-wrap">
+                                {viewingPatientRecord.advice}
+                              </p>
+                            </div>
+                          )}
+
+                          {/* Doctor Notes */}
+                          {viewingPatientRecord.doctorNotes && (
+                            <div className="bg-gray-50 p-3 rounded-lg">
+                              <p className="text-xs text-gray-500 mb-1">
+                                Doctor Notes
+                              </p>
+                              <p className="text-sm text-gray-700 whitespace-pre-wrap">
+                                {viewingPatientRecord.doctorNotes}
+                              </p>
+                            </div>
+                          )}
+
+                          {/* Referral */}
+                          {viewingPatientRecord.referral && (
+                            <div className="bg-orange-50 p-3 rounded-lg border-l-4 border-orange-400">
+                              <p className="text-xs text-orange-600 mb-1">
+                                Referral
+                              </p>
+                              <p className="text-sm text-gray-700">
+                                <strong>Hospital:</strong>{" "}
+                                {viewingPatientRecord.referral.hospital}
+                              </p>
+                              <p className="text-sm text-gray-700">
+                                <strong>Reason:</strong>{" "}
+                                {viewingPatientRecord.referral.reason}
+                              </p>
+                              {viewingPatientRecord.referral.urgency && (
+                                <p className="text-sm text-gray-700">
+                                  <strong>Urgency:</strong>{" "}
+                                  {viewingPatientRecord.referral.urgency}
+                                </p>
+                              )}
+                            </div>
+                          )}
+
+                          {/* Severity */}
+                          {viewingPatientRecord.severity && (
+                            <div className="flex items-center gap-2">
+                              <p className="text-xs text-gray-500">Severity:</p>
+                              <span
+                                className={`px-2 py-1 rounded text-xs font-medium ${
+                                  viewingPatientRecord.severity === "red"
+                                    ? "bg-red-100 text-red-700"
+                                    : viewingPatientRecord.severity ===
+                                      "orange"
+                                    ? "bg-orange-100 text-orange-700"
+                                    : "bg-green-100 text-green-700"
+                                }`}
+                              >
+                                {viewingPatientRecord.severity.toUpperCase()}
+                              </span>
+                            </div>
+                          )}
+                        </div>
+
+                        {/* Modal Footer */}
+                        <div className="p-4 border-t border-gray-200 flex justify-end">
+                          <button
+                            onClick={() => setViewingPatientRecord(null)}
+                            className="px-4 py-2 bg-green-500 text-white rounded-lg hover:bg-green-600 transition-colors"
                           >
                             Close
                           </button>

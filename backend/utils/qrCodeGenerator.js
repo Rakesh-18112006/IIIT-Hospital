@@ -37,14 +37,25 @@ export const generateQRCode = async (userId, studentId) => {
 /**
  * Parse QR code data
  * Handles both string and object inputs
+ * Supports both full QR format (with studentId and token) and simplified format (userId only) for doctor access
  */
-export const parseQRCode = (qrData) => {
+export const parseQRCode = (qrData, allowSimplifiedFormat = false) => {
   try {
     console.log('📱 [Parse] Input type:', typeof qrData);
+    console.log('📱 [Parse] Allow simplified format:', allowSimplifiedFormat);
     
     // If already an object, return as is
     if (typeof qrData === 'object' && qrData !== null) {
       console.log('✅ [Parse] Data is already an object');
+      // Validate the object
+      if (!qrData.userId) {
+        throw new Error('Missing required field: userId');
+      }
+      // If simplified format is allowed, only userId is required
+      if (!allowSimplifiedFormat && (!qrData.studentId || !qrData.token)) {
+        console.log('❌ [Parse] Missing fields - userId:', !!qrData.userId, 'studentId:', !!qrData.studentId, 'token:', !!qrData.token);
+        throw new Error('Missing required QR code fields: userId, studentId, and token are required');
+      }
       return qrData;
     }
 
@@ -58,8 +69,20 @@ export const parseQRCode = (qrData) => {
       const parsed = JSON.parse(trimmedData);
       console.log('✅ [Parse] Successfully parsed JSON');
       
-      // Validate required fields
-      if (!parsed.userId || !parsed.studentId || !parsed.token) {
+      // Validate userId is always required
+      if (!parsed.userId) {
+        console.log('❌ [Parse] Missing userId field');
+        throw new Error('Missing required field: userId');
+      }
+      
+      // If simplified format is allowed, only userId is required
+      if (allowSimplifiedFormat) {
+        console.log('✅ [Parse] Simplified format accepted (userId only)');
+        return parsed;
+      }
+      
+      // Otherwise, validate all required fields for full QR format
+      if (!parsed.studentId || !parsed.token) {
         console.log('❌ [Parse] Missing fields - userId:', !!parsed.userId, 'studentId:', !!parsed.studentId, 'token:', !!parsed.token);
         throw new Error('Missing required QR code fields: userId, studentId, and token are required');
       }
