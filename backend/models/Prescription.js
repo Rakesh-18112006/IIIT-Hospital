@@ -42,7 +42,7 @@ const prescriptionSchema = new mongoose.Schema(
         },
         dosage: {
           type: String,
-          required: true,
+          required: false,
           trim: true,
         },
         frequency: {
@@ -57,13 +57,11 @@ const prescriptionSchema = new mongoose.Schema(
           type: String,
           trim: true,
         },
-        // Specific timings for the medicine
-        timings: [
-          {
-            type: String,
-            enum: ["morning", "noon", "evening", "night"],
-          },
-        ],
+        // Specific timings for the medicine (array of strings)
+        timings: [{
+          type: String,
+          enum: ["morning", "noon", "evening", "night"],
+        }],
         // Actual times in 24-hour format (e.g., "07:00", "13:00")
         specificTimes: [String],
         // Track if patient is taking this medicine

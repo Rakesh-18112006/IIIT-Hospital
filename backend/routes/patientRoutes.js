@@ -1,6 +1,7 @@
 import express from 'express';
 import {
   submitSymptoms,
+  analyzeSymptoms,
   getMyRecords,
   getMyLeaves,
   getMyDiet,
@@ -23,6 +24,7 @@ import { protect, authorize } from '../middleware/auth.js';
 const router = express.Router();
 
 // Student routes
+router.post('/analyze-symptoms', protect, authorize('student'), analyzeSymptoms);
 router.post('/symptoms', protect, authorize('student'), submitSymptoms);
 router.get('/my-records', protect, authorize('student'), getMyRecords);
 router.get('/my-leaves', protect, authorize('student'), getMyLeaves);

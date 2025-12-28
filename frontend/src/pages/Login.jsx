@@ -179,14 +179,6 @@ const Login = () => {
                 {loading ? "Signing in..." : "Sign In"}
               </button>
 
-              <div className="mt-4 text-center text-sm text-gray-500">
-                <p>Demo Credentials:</p>
-                <p className="text-xs mt-1">
-                  Doctor: doctor@iiit.ac.in / password123
-                </p>
-                <p className="text-xs">Admin: admin@iiit.ac.in / password123</p>
-                <p className="text-xs">Mess: mess@iiit.ac.in / password123</p>
-              </div>
             </form>
           )}
         </div>

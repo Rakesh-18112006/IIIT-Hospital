@@ -1,4 +1,6 @@
 import MedicalDocument from "../models/MedicalDocument.js";
+import Prescription from "../models/Prescription.js";
+import PatientRecord from "../models/PatientRecord.js";
 import Tesseract from "tesseract.js";
 import Groq from "groq-sdk";
 import path from "path";
@@ -235,25 +237,92 @@ export const queryMedicalBot = async (req, res) => {
         });
     }
 
-    // Get all documents for this student
-    const documents = await MedicalDocument.find({
-      student: req.user._id,
-      processingStatus: "completed",
-    });
+    const studentId = req.user._id;
 
-    if (documents.length === 0) {
+    // Get all medical data sources for this student
+    // 1. Medical Documents (uploaded by student)
+    const documents = await MedicalDocument.find({
+      student: studentId,
+      processingStatus: "completed",
+    }).sort({ uploadDate: -1 }); // Most recent first
+
+    // 2. Prescriptions (from doctor-uploaded medical receipts/emails)
+    const prescriptions = await Prescription.find({
+      patientId: studentId,
+      status: { $in: ["active", "completed"] },
+    })
+      .populate("doctorId", "name department")
+      .populate("appointmentId")
+      .sort({ createdAt: -1 }); // Most recent first
+
+    // 3. Patient Records (from doctor consultations)
+    const patientRecords = await PatientRecord.find({
+      student: studentId,
+      status: "completed",
+    })
+      .populate("assignedDoctor", "name department")
+      .sort({ completedAt: -1, visitDate: -1 }); // Most recent first
+
+    // Check if we have any medical data
+    const hasData = documents.length > 0 || prescriptions.length > 0 || patientRecords.length > 0;
+
+    if (!hasData) {
       return res.json({
         answer:
-          "You haven't uploaded any medical documents yet. Please upload your medical records first to get personalized answers.",
+          "You don't have any medical records yet. Once your doctor adds prescriptions or medical reports, I'll be able to answer your questions about your medications and health records.",
         source: null,
       });
     }
 
-    // Build context from all documents
-    const documentsContext = documents
-      .map((doc, index) => {
-        return `
-Document ${index + 1}: ${doc.originalName} (Uploaded: ${new Date(
+    // Build comprehensive context from all sources
+    let contextParts = [];
+
+    // 1. Prescriptions (prioritize - most recent first)
+    if (prescriptions.length > 0) {
+      contextParts.push("=== PRESCRIPTIONS (Most Recent First) ===");
+      prescriptions.forEach((prescription, index) => {
+        const medList = prescription.medicines.map(med => {
+          const timingStr = med.timings && med.timings.length > 0 
+            ? ` (Take: ${med.timings.join(', ')})` 
+            : '';
+          return `- ${med.name}${timingStr}`;
+        }).join('\n');
+
+        contextParts.push(`
+Prescription #${index + 1} (Date: ${new Date(prescription.createdAt).toLocaleDateString()})
+Doctor: Dr. ${prescription.doctor?.name || prescription.doctorId?.name || "Unknown"}
+Diagnosis: ${prescription.diagnosis || "N/A"}
+Medications:
+${medList || "None"}
+Advice: ${prescription.advice || "None"}
+Notes: ${prescription.notes || "None"}
+---`);
+      });
+    }
+
+    // 2. Patient Records (recent consultations)
+    if (patientRecords.length > 0) {
+      contextParts.push("\n=== MEDICAL CONSULTATIONS (Most Recent First) ===");
+      patientRecords.slice(0, 10).forEach((record, index) => {
+        contextParts.push(`
+Consultation #${index + 1} (Date: ${new Date(record.completedAt || record.visitDate).toLocaleDateString()})
+Doctor: ${record.assignedDoctor?.name || "Unknown"}
+Symptoms: ${record.symptoms?.join(", ") || "N/A"}
+Description: ${record.symptomDescription || "N/A"}
+Prescription: ${record.prescription || "None"}
+Advice: ${record.advice || "None"}
+Doctor Notes: ${record.doctorNotes || "None"}
+Severity: ${record.severity || "N/A"}
+---`);
+      });
+    }
+
+    // 3. Medical Documents (uploaded documents)
+    if (documents.length > 0) {
+      contextParts.push("\n=== UPLOADED MEDICAL DOCUMENTS ===");
+      documents.forEach((doc, index) => {
+        contextParts.push(`
+Document ${index + 1}: ${doc.originalName || "Medical Document"} (Uploaded: ${new Date(
           doc.uploadDate
         ).toLocaleDateString()})
 Type: ${doc.analyzedData?.documentType || "Unknown"}
@@ -267,34 +336,40 @@ Test Results: ${
             .join(", ") || "None"
         }
 Summary: ${doc.analyzedData?.summary || "No summary"}
----`;
-      })
-      .join("\n");
+---`);
+      });
+    }
 
-    const prompt = `You are a helpful medical records assistant. Answer the user's question based ONLY on their uploaded medical documents.
+    const fullContext = contextParts.join("\n");
 
-User's Medical Documents:
-${documentsContext}
+    // Enhanced prompt with medication-specific instructions
+    const prompt = `You are a helpful medical records assistant. Answer the user's question based on their complete medical history including prescriptions, consultations, and uploaded documents.
 
-User's Question: ${question}
+PATIENT'S COMPLETE MEDICAL RECORDS:
+${fullContext}
 
-Instructions:
-1. Answer based ONLY on the information in the documents above
-2. If the information is found, clearly state it and mention which document it came from (use the document name)
-3. If the information is not found in any document, say "This information was not found in your uploaded documents"
-4. Be concise and direct
-5. For blood group questions, respond with just the blood group (e.g., "O+" or "A-") and the source document
-6. Always mention the source document name where you found the information
+USER'S QUESTION: ${question}
 
-Response format:
-Answer: [your answer]
-Source: [document name where info was found, or "Not found in documents"]`;
+IMPORTANT INSTRUCTIONS:
+1. PRIORITIZE RECENT INFORMATION: When answering about medications, always mention the most recent prescription first
+2. For "latest medication" or "current medication" questions, list medications from the most recent prescription (Prescription #1)
+3. Include timing information (morning, evening, night) when available
+4. If multiple prescriptions exist, mention which is the most recent
+5. For medication questions, format as: Medicine Name (Timing: morning/evening/night)
+6. Always mention the source (Prescription date, Consultation date, or Document name)
+7. If information is not found, say "This information was not found in your medical records"
+8. Be concise but comprehensive
+9. For medication-related questions, prioritize prescription data over uploaded documents
+
+RESPONSE FORMAT:
+Answer: [your detailed answer]
+Source: [Prescription date, Consultation date, or Document name]`;
 
     const completion = await client.chat.completions.create({
       messages: [{ role: "user", content: prompt }],
       model: "llama-3.3-70b-versatile",
       temperature: 0.1,
-      max_tokens: 500,
+      max_tokens: 800, // Increased for more detailed responses
     });
 
     const responseText = completion.choices[0]?.message?.content || "";
@@ -308,15 +383,28 @@ Source: [document name where info was found, or "Not found in documents"]`;
 
     if (answerMatch) {
       answer = answerMatch[1].trim();
+    } else {
+      // If no format match, use the whole response as answer
+      answer = responseText.trim();
     }
+    
     if (sourceMatch) {
       source = sourceMatch[1].trim();
+    } else {
+      // Try to infer source from answer
+      if (prescriptions.length > 0 && (answer.toLowerCase().includes("prescription") || answer.toLowerCase().includes("medication"))) {
+        source = `Prescription from ${new Date(prescriptions[0].createdAt).toLocaleDateString()}`;
+      } else if (patientRecords.length > 0) {
+        source = `Consultation from ${new Date(patientRecords[0].completedAt || patientRecords[0].visitDate).toLocaleDateString()}`;
+      } else if (documents.length > 0) {
+        source = documents[0].originalName || "Medical Document";
+      }
     }
 
     res.json({ answer, source });
   } catch (error) {
     console.error("Medical bot query error:", error);
-    res.status(500).json({ message: "Error processing your question" });
+    res.status(500).json({ message: "Error processing your question", error: error.message });
   }
 };
 

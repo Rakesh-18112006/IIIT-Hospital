@@ -280,12 +280,24 @@ export const getMyAppointments = async (req, res) => {
 export const cancelAppointment = async (req, res) => {
   try {
     const { id } = req.params;
-    const studentId = req.user._id;
+    const userId = req.user._id;
+    const userRole = req.user.role;
 
-    const appointment = await Appointment.findOne({
-      _id: id,
-      student: studentId,
-    });
+    // Find appointment - allow both student and doctor to cancel
+    let appointment;
+    if (userRole === "student") {
+      appointment = await Appointment.findOne({
+        _id: id,
+        student: userId,
+      });
+    } else if (userRole === "doctor") {
+      appointment = await Appointment.findOne({
+        _id: id,
+        doctor: userId,
+      });
+    } else {
+      return res.status(403).json({ message: "Not authorized to cancel appointment" });
+    }
 
     if (!appointment) {
       return res.status(404).json({ message: "Appointment not found" });
@@ -308,17 +320,22 @@ export const cancelAppointment = async (req, res) => {
     await appointment.save();
 
     // Update queue
-    const queue = await DoctorQueue.getOrCreateQueue(
-      appointment.doctor,
-      appointment.slotDate
-    );
-    await queue.updateStats(Appointment);
-    await reorderDoctorQueue(appointment.doctor, appointment.slotDate);
+    try {
+      const queue = await DoctorQueue.getOrCreateQueue(
+        appointment.doctor,
+        appointment.slotDate
+      );
+      await queue.updateStats(Appointment);
+      await reorderDoctorQueue(appointment.doctor, appointment.slotDate);
+    } catch (queueError) {
+      console.error("Error updating queue:", queueError);
+      // Don't fail the operation if queue update fails
+    }
 
     res.json({ message: "Appointment cancelled successfully", appointment });
   } catch (error) {
     console.error("Error cancelling appointment:", error);
-    res.status(500).json({ message: "Error cancelling appointment" });
+    res.status(500).json({ message: "Error cancelling appointment", error: error.message });
   }
 };
 
@@ -337,7 +354,8 @@ export const getDoctorQueue = async (req, res) => {
     const nextDay = new Date(targetDate);
     nextDay.setDate(nextDay.getDate() + 1);
 
-    const appointments = await Appointment.find({
+    // Get all appointments for the day
+    let appointments = await Appointment.find({
       doctor: doctorId,
       slotDate: { $gte: targetDate, $lt: nextDay },
       status: { $in: ["pending", "confirmed", "in-progress"] },
@@ -345,6 +363,26 @@ export const getDoctorQueue = async (req, res) => {
       .populate("student", "name email studentId branch year hostelBlock phone")
       .sort({ riskScore: -1, slotTime: 1 })
       .lean();
+
+    // Filter out expired appointments that have prescriptions
+    const now = new Date();
+    appointments = appointments.filter(apt => {
+      // Check if appointment slot time has passed
+      const slotDateTime = new Date(apt.slotDate);
+      const [hours, minutes] = apt.slotTime.split(':');
+      slotDateTime.setHours(parseInt(hours), parseInt(minutes), 0, 0);
+      
+      // If slot time has passed and appointment has prescription, mark as expired
+      if (slotDateTime < now && apt.prescription) {
+        // Update status to completed if not already
+        Appointment.findByIdAndUpdate(apt._id, { 
+          status: 'completed',
+          completedAt: new Date()
+        }).catch(err => console.error('Error updating expired appointment:', err));
+        return false; // Remove from queue
+      }
+      return true; // Keep in queue
+    });
 
     // Get queue metadata
     const queue = await DoctorQueue.getOrCreateQueue(doctorId, targetDate);

@@ -74,6 +74,9 @@ router.put(
   updateAppointmentPriority
 );
 
+// Cancel appointment (doctor can cancel)
+router.put("/doctor/:id/cancel", authorize("doctor"), cancelAppointment);
+
 // Save prescription and create medical document
 router.post(
   "/doctor/:id/save-prescription",

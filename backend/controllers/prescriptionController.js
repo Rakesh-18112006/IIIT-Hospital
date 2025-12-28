@@ -1,6 +1,8 @@
 import Prescription from "../models/Prescription.js";
 import User from "../models/User.js";
 import Appointment from "../models/Appointment.js";
+import PatientRecord from "../models/PatientRecord.js";
+import MedicalDocument from "../models/MedicalDocument.js";
 import nodemailer from "nodemailer";
 import { generatePrescriptionReceiptEmail } from "../utils/emailTemplates.js";
 
@@ -20,20 +22,32 @@ export const savePrescription = async (req, res) => {
       });
     }
 
-    // Get appointment to find patient
-    const appointment = await Appointment.findById(appointmentId).populate("patientId");
+    // Get appointment to find patient - Note: Appointment uses 'student' not 'patientId'
+    const appointment = await Appointment.findById(appointmentId).populate("student");
     if (!appointment) {
       return res.status(404).json({ message: "Appointment not found" });
     }
 
-    const patientId = appointment.patientId._id;
-    const patient = appointment.patientId;
+    if (!appointment.student) {
+      return res.status(404).json({ message: "Student not found in appointment" });
+    }
+
+    const patientId = appointment.student._id || appointment.student;
+    const patient = appointment.student;
 
     // Get doctor info
     const doctor = await User.findById(doctorId);
     if (!doctor) {
       return res.status(404).json({ message: "Doctor not found" });
     }
+
+    // Format prescription text for medical records
+    const prescriptionText = medicines.map(med => {
+      const timingStr = med.timings && med.timings.length > 0 
+        ? ` (${med.timings.join(', ')})` 
+        : '';
+      return `${med.name}${timingStr}`;
+    }).join('\n');
 
     // Create prescription with medicine timings
     const prescription = new Prescription({
@@ -42,18 +56,25 @@ export const savePrescription = async (req, res) => {
       doctorId,
       diagnosis,
       symptoms: symptoms || [],
-      medicines: medicines.map((med) => ({
-        name: med.name,
-        dosage: med.dosage,
-        frequency: med.frequency,
-        duration: med.duration,
-        instructions: med.instructions,
-        timings: med.timings || [], // e.g., ["morning", "evening"]
-        specificTimes: convertTimingsToTimes(med.timings),
-        medicineSchedule: initializeMedicineSchedule(med.timings),
-      })),
-      notes,
-      advice,
+      medicines: medicines.map((med) => {
+        // Ensure timings is an array of valid strings
+        const timingsArray = Array.isArray(med.timings) 
+          ? med.timings.filter(t => t && typeof t === 'string' && ['morning', 'noon', 'evening', 'night'].includes(t))
+          : [];
+        
+        return {
+          name: med.name,
+          dosage: med.dosage || '',
+          frequency: med.frequency || '',
+          duration: med.duration || '',
+          instructions: med.instructions || '',
+          timings: timingsArray, // e.g., ["morning", "evening", "night"] - will be stored as array of strings
+          specificTimes: convertTimingsToTimes(timingsArray),
+          medicineSchedule: initializeMedicineSchedule(timingsArray),
+        };
+      }),
+      notes: notes || '',
+      advice: advice || '',
       interactions: interactions || [],
       doctor: {
         name: doctor.name,
@@ -69,11 +90,65 @@ export const savePrescription = async (req, res) => {
 
     // Update appointment status
     appointment.status = "completed";
-    appointment.prescription = prescription._id;
+    appointment.prescription = prescriptionText; // Store prescription text
+    appointment.doctorNotes = notes || '';
+    appointment.completedAt = new Date();
     await appointment.save();
 
+    // Create PatientRecord entry
+    try {
+      const patientRecord = new PatientRecord({
+        student: patientId,
+        symptoms: symptoms || [],
+        symptomDescription: diagnosis,
+        severity: appointment.severity || 'green',
+        status: 'completed',
+        assignedDoctor: doctorId,
+        doctorNotes: notes || '',
+        prescription: prescriptionText,
+        advice: advice || '',
+        visitDate: new Date(),
+        completedAt: new Date(),
+      });
+      await patientRecord.save();
+    } catch (recordError) {
+      console.error("Error creating patient record:", recordError);
+      // Don't fail the whole operation if record creation fails
+    }
+
+    // Create MedicalDocument entry
+    try {
+      const medicalDocument = new MedicalDocument({
+        student: patientId,
+        documentType: "prescription",
+        extractedText: prescriptionText,
+        analyzedData: {
+          doctorName: doctor.name,
+          diagnosis: diagnosis,
+          summary: advice || "No additional advice provided",
+          documentType: "prescription",
+          medicines: medicines.map(med => ({
+            name: med.name,
+            timings: med.timings || []
+          })),
+        },
+        processingStatus: "completed",
+        uploadDate: new Date(),
+      });
+      await medicalDocument.save();
+    } catch (docError) {
+      console.error("Error creating medical document:", docError);
+      // Don't fail the whole operation if document creation fails
+    }
+
     // Send email notification with prescription details
-    const emailSent = await sendPrescriptionEmail(patient, doctor, prescription, appointment);
+    let emailSent = false;
+    try {
+      emailSent = await sendPrescriptionEmail(patient, doctor, prescription, appointment);
+    } catch (emailError) {
+      console.error("Error sending prescription email:", emailError);
+      // Don't fail the whole operation if email fails
+    }
 
     // Mark as emailed
     prescription.emailSent = emailSent;
@@ -81,18 +156,28 @@ export const savePrescription = async (req, res) => {
     await prescription.save();
 
     // Add notification to patient
-    patient.notifications.push({
-      type: "prescription",
-      title: "New Prescription Available",
-      message: `Dr. ${doctor.name} has issued a new prescription for you.`,
-      data: {
-        prescriptionId: prescription._id,
-        doctorName: doctor.name,
-        diagnosis: diagnosis,
-      },
-      read: false,
-    });
-    await patient.save();
+    try {
+      const notificationDate = new Date();
+      if (!patient.notifications) {
+        patient.notifications = [];
+      }
+      patient.notifications.push({
+        type: "prescription",
+        title: "Appointment Success",
+        message: "Your appointment success",
+        data: {
+          prescriptionId: prescription._id,
+          doctorName: doctor.name,
+          diagnosis: diagnosis,
+        },
+        read: false,
+        createdAt: notificationDate,
+      });
+      await patient.save();
+    } catch (notifError) {
+      console.error("Error adding notification:", notifError);
+      // Don't fail the whole operation if notification fails
+    }
 
     res.status(201).json({
       message: "Prescription saved successfully and email sent to patient",
@@ -101,9 +186,11 @@ export const savePrescription = async (req, res) => {
     });
   } catch (error) {
     console.error("Error saving prescription:", error);
+    console.error("Error stack:", error.stack);
     res.status(500).json({
       message: "Error saving prescription",
       error: error.message,
+      stack: process.env.NODE_ENV === 'development' ? error.stack : undefined,
     });
   }
 };
@@ -424,14 +511,21 @@ async function sendPrescriptionEmail(patient, doctor, prescription, appointment)
 
     // Generate prescription receipt HTML
     const prescriptionHTML = generatePrescriptionReceiptEmail({
-      patientName: patient.name,
-      patientId: patient.studentId,
-      doctorName: doctor.name,
-      doctorDepartment: doctor.department,
-      diagnosis: prescription.diagnosis,
-      medicines: prescription.medicines,
-      notes: prescription.notes,
-      advice: prescription.advice,
+      patientName: patient.name || "Patient",
+      patientId: patient.studentId || patient._id?.toString() || "N/A",
+      doctorName: doctor.name || "Doctor",
+      doctorDepartment: doctor.department || "General",
+      diagnosis: prescription.diagnosis || "N/A",
+      medicines: prescription.medicines.map(med => ({
+        name: med.name,
+        dosage: med.dosage || "As directed",
+        frequency: med.frequency || "As directed",
+        duration: med.duration || "As directed",
+        instructions: med.instructions || "As directed",
+        timings: Array.isArray(med.timings) ? med.timings : [],
+      })),
+      notes: prescription.notes || "",
+      advice: prescription.advice || "Follow doctor's instructions",
       prescriptionDate: new Date().toLocaleDateString(),
       hospitalName: "IIIT Hospital",
       hospitalAddress: "RGUKT Campus, Telangana",

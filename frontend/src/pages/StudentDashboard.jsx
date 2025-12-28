@@ -115,6 +115,11 @@ const StudentDashboard = () => {
   });
   const [submitLoading, setSubmitLoading] = useState(false);
   const [submitSuccess, setSubmitSuccess] = useState(false);
+  
+  // Symptom Analysis state
+  const [analysisLoading, setAnalysisLoading] = useState(false);
+  const [symptomAnalysis, setSymptomAnalysis] = useState(null);
+  const [showAnalysis, setShowAnalysis] = useState(false);
 
   // Medical Documents state
   const [documents, setDocuments] = useState([]);
@@ -642,6 +647,38 @@ const StudentDashboard = () => {
     }
   };
 
+  const handleAnalyzeSymptoms = async () => {
+    if (selectedSymptoms.length === 0) {
+      alert("Please select at least one symptom to analyze");
+      return;
+    }
+
+    setAnalysisLoading(true);
+    try {
+      const vitalsData = {};
+      if (vitals.temperature)
+        vitalsData.temperature = parseFloat(vitals.temperature);
+      if (vitals.bloodPressure) vitalsData.bloodPressure = vitals.bloodPressure;
+      if (vitals.heartRate) vitalsData.heartRate = parseInt(vitals.heartRate);
+      if (vitals.oxygenLevel)
+        vitalsData.oxygenLevel = parseInt(vitals.oxygenLevel);
+
+      const response = await api.post("/patient/analyze-symptoms", {
+        symptoms: selectedSymptoms,
+        symptomDescription: description,
+        vitals: Object.keys(vitalsData).length > 0 ? vitalsData : undefined,
+      });
+
+      setSymptomAnalysis(response.data.analysis);
+      setShowAnalysis(true);
+    } catch (error) {
+      console.error("Error analyzing symptoms:", error);
+      alert(error.response?.data?.message || "Failed to analyze symptoms");
+    } finally {
+      setAnalysisLoading(false);
+    }
+  };
+
   const handleSubmitSymptoms = async (e) => {
     e.preventDefault();
     if (selectedSymptoms.length === 0) return;
@@ -671,6 +708,8 @@ const StudentDashboard = () => {
         heartRate: "",
         oxygenLevel: "",
       });
+      setSymptomAnalysis(null);
+      setShowAnalysis(false);
       fetchData();
 
       setTimeout(() => setSubmitSuccess(false), 3000);
@@ -978,7 +1017,9 @@ const StudentDashboard = () => {
                                 {notif.message}
                               </p>
                               <p className="text-xs text-gray-400 mt-1">
-                                {new Date(notif.createdAt).toLocaleDateString()}
+                                {notif.createdAt && !isNaN(new Date(notif.createdAt).getTime()) 
+                                  ? new Date(notif.createdAt).toLocaleDateString()
+                                  : new Date().toLocaleDateString()}
                               </p>
                             </div>
                           </div>
@@ -1148,15 +1189,181 @@ const StudentDashboard = () => {
                       </div>
                     </div>
 
-                    <button
-                      type="submit"
-                      disabled={selectedSymptoms.length === 0 || submitLoading}
-                      className="w-full md:w-auto flex items-center justify-center gap-2 bg-sky-500 text-white px-6 py-3 rounded-lg hover:bg-sky-600 transition-colors disabled:opacity-50 font-medium"
-                    >
-                      <Send className="h-5 w-5" />
-                      {submitLoading ? "Submitting..." : "Submit Symptoms"}
-                    </button>
+                    <div className="flex flex-col sm:flex-row gap-3">
+                      <button
+                        type="button"
+                        onClick={handleAnalyzeSymptoms}
+                        disabled={selectedSymptoms.length === 0 || analysisLoading}
+                        className="flex-1 flex items-center justify-center gap-2 bg-gradient-to-r from-purple-500 to-pink-500 text-white px-6 py-3 rounded-lg hover:from-purple-600 hover:to-pink-600 transition-colors disabled:opacity-50 font-medium shadow-md"
+                      >
+                        {analysisLoading ? (
+                          <>
+                            <Loader2 className="h-5 w-5 animate-spin" />
+                            Analyzing...
+                          </>
+                        ) : (
+                          <>
+                            <Activity className="h-5 w-5" />
+                            Analyze Symptoms (AI)
+                          </>
+                        )}
+                      </button>
+                      <button
+                        type="submit"
+                        disabled={selectedSymptoms.length === 0 || submitLoading}
+                        className="flex-1 flex items-center justify-center gap-2 bg-sky-500 text-white px-6 py-3 rounded-lg hover:bg-sky-600 transition-colors disabled:opacity-50 font-medium"
+                      >
+                        <Send className="h-5 w-5" />
+                        {submitLoading ? "Submitting..." : "Submit Symptoms"}
+                      </button>
+                    </div>
                   </form>
+
+                  {/* Symptom Analysis Results */}
+                  {showAnalysis && symptomAnalysis && !symptomAnalysis.error && (
+                    <div className="mt-6 bg-gradient-to-br from-blue-50 to-indigo-50 rounded-xl border-2 border-blue-200 p-6 shadow-lg">
+                      <div className="flex items-center justify-between mb-4">
+                        <h3 className="text-xl font-bold text-gray-800 flex items-center gap-2">
+                          <Activity className="h-6 w-6 text-blue-600" />
+                          AI Symptom Analysis & Triage
+                        </h3>
+                        <button
+                          onClick={() => setShowAnalysis(false)}
+                          className="p-2 hover:bg-blue-100 rounded-lg transition-colors"
+                        >
+                          <X className="h-5 w-5 text-gray-600" />
+                        </button>
+                      </div>
+
+                      {/* Severity Assessment */}
+                      {symptomAnalysis.severityAssessment && (
+                        <div className="mb-6 p-4 bg-white rounded-lg border-2 border-blue-200">
+                          <div className="flex items-center gap-3 mb-3">
+                            <div className={`w-12 h-12 rounded-full flex items-center justify-center font-bold text-white ${
+                              symptomAnalysis.severityAssessment.level === 'critical' ? 'bg-red-500' :
+                              symptomAnalysis.severityAssessment.level === 'high' ? 'bg-orange-500' :
+                              symptomAnalysis.severityAssessment.level === 'medium' ? 'bg-yellow-500' :
+                              'bg-green-500'
+                            }`}>
+                              {symptomAnalysis.severityAssessment.score || 0}
+                            </div>
+                            <div>
+                              <p className="font-semibold text-gray-800">
+                                Severity: {symptomAnalysis.severityAssessment.level?.toUpperCase() || 'N/A'}
+                              </p>
+                              <p className="text-sm text-gray-600">
+                                {symptomAnalysis.severityAssessment.reason || ''}
+                              </p>
+                            </div>
+                          </div>
+                          <div className="mt-2">
+                            <p className="text-sm font-semibold text-gray-700">Urgency: {symptomAnalysis.urgency?.toUpperCase() || 'N/A'}</p>
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Possible Outbreaks/Diseases */}
+                      {symptomAnalysis.symptomAnalysis?.possibleOutbreaks && symptomAnalysis.symptomAnalysis.possibleOutbreaks.length > 0 && (
+                        <div className="mb-6">
+                          <h4 className="text-lg font-bold text-gray-800 mb-3 flex items-center gap-2">
+                            <AlertCircle className="h-5 w-5 text-orange-500" />
+                            Possible Outbreaks & Diseases
+                          </h4>
+                          <div className="space-y-4">
+                            {symptomAnalysis.symptomAnalysis.possibleOutbreaks.map((outbreak, idx) => (
+                              <div key={idx} className="bg-white rounded-lg p-4 border-2 border-orange-200 shadow-sm">
+                                <div className="flex items-start justify-between mb-2">
+                                  <h5 className="font-bold text-lg text-gray-800">{outbreak.outbreak}</h5>
+                                  <span className={`px-3 py-1 rounded-full text-xs font-semibold ${
+                                    outbreak.likelihood === 'high' ? 'bg-red-100 text-red-700' :
+                                    outbreak.likelihood === 'medium' ? 'bg-yellow-100 text-yellow-700' :
+                                    'bg-green-100 text-green-700'
+                                  }`}>
+                                    {outbreak.likelihood?.toUpperCase()} Likelihood
+                                  </span>
+                                </div>
+                                <div className="bg-blue-50 rounded-lg p-3 mt-3 border-l-4 border-blue-400">
+                                  <p className="text-sm font-semibold text-blue-900 mb-1">Why this outbreak could cause these symptoms:</p>
+                                  <p className="text-sm text-blue-800">{outbreak.explanation || 'No explanation provided'}</p>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Possible Conditions */}
+                      {symptomAnalysis.possibleConditions && symptomAnalysis.possibleConditions.length > 0 && (
+                        <div className="mb-6">
+                          <h4 className="text-lg font-bold text-gray-800 mb-3 flex items-center gap-2">
+                            <Stethoscope className="h-5 w-5 text-blue-600" />
+                            Possible Medical Conditions
+                          </h4>
+                          <div className="space-y-3">
+                            {symptomAnalysis.possibleConditions.map((condition, idx) => (
+                              <div key={idx} className="bg-white rounded-lg p-4 border border-gray-200">
+                                <div className="flex items-center justify-between mb-2">
+                                  <h5 className="font-semibold text-gray-800">{condition.condition}</h5>
+                                  <span className={`px-2 py-1 rounded text-xs font-medium ${
+                                    condition.probability === 'high' ? 'bg-red-100 text-red-700' :
+                                    condition.probability === 'medium' ? 'bg-yellow-100 text-yellow-700' :
+                                    'bg-green-100 text-green-700'
+                                  }`}>
+                                    {condition.probability?.toUpperCase()} Probability
+                                  </span>
+                                </div>
+                                <p className="text-sm text-gray-600">{condition.explanation || ''}</p>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Recommendations */}
+                      {symptomAnalysis.recommendations && symptomAnalysis.recommendations.length > 0 && (
+                        <div className="mb-6">
+                          <h4 className="text-lg font-bold text-gray-800 mb-3 flex items-center gap-2">
+                            <CheckCircle className="h-5 w-5 text-green-600" />
+                            Recommendations
+                          </h4>
+                          <ul className="space-y-2">
+                            {symptomAnalysis.recommendations.map((rec, idx) => (
+                              <li key={idx} className="flex items-start gap-2 bg-white rounded-lg p-3 border border-green-200">
+                                <CheckCircle className="h-5 w-5 text-green-500 flex-shrink-0 mt-0.5" />
+                                <span className="text-sm text-gray-700">{rec}</span>
+                              </li>
+                            ))}
+                          </ul>
+                        </div>
+                      )}
+
+                      {/* Next Steps */}
+                      {symptomAnalysis.nextSteps && (
+                        <div className="bg-gradient-to-r from-blue-500 to-indigo-600 text-white rounded-lg p-4">
+                          <h4 className="font-bold mb-2 flex items-center gap-2">
+                            <Info className="h-5 w-5" />
+                            Next Steps
+                          </h4>
+                          <p className="text-sm">{symptomAnalysis.nextSteps}</p>
+                        </div>
+                      )}
+
+                      {/* Symptom Pattern */}
+                      {symptomAnalysis.symptomAnalysis?.symptomPattern && (
+                        <div className="mt-4 bg-white rounded-lg p-4 border border-gray-200">
+                          <h4 className="font-semibold text-gray-800 mb-2">Symptom Pattern Analysis</h4>
+                          <p className="text-sm text-gray-600">{symptomAnalysis.symptomAnalysis.symptomPattern}</p>
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {/* Analysis Error */}
+                  {showAnalysis && symptomAnalysis && symptomAnalysis.error && (
+                    <div className="mt-6 bg-red-50 border-2 border-red-200 rounded-lg p-4">
+                      <p className="text-red-700">Error: {symptomAnalysis.error}</p>
+                    </div>
+                  )}
                 </div>
               )}
 
@@ -1222,9 +1429,9 @@ const StudentDashboard = () => {
                                     : "ℹ️ Appointment Update"}
                                 </h4>
                                 <span className="text-xs text-gray-500">
-                                  {new Date(
-                                    notification.notification?.createdAt
-                                  ).toLocaleTimeString()}
+                                  {notification.notification?.createdAt && !isNaN(new Date(notification.notification.createdAt).getTime())
+                                    ? new Date(notification.notification.createdAt).toLocaleTimeString()
+                                    : new Date().toLocaleTimeString()}
                                 </span>
                               </div>
                               <p

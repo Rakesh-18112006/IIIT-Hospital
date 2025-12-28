@@ -5,6 +5,127 @@ import MedicalDocument from '../models/MedicalDocument.js';
 import User from '../models/User.js';
 import { classifySeverity, suggestDiet, suggestTests } from '../utils/severityLogic.js';
 import { generateQRCode, parseQRCode } from '../utils/qrCodeGenerator.js';
+import Groq from 'groq-sdk';
+
+// Initialize Groq client (lazy initialization to handle missing API key)
+let groq = null;
+const getGroqClient = () => {
+  if (!groq && process.env.GROQ_API_KEY) {
+    groq = new Groq({
+      apiKey: process.env.GROQ_API_KEY,
+    });
+  }
+  return groq;
+};
+
+// @desc    Analyze symptoms with Groq LLM (Triage/Analysis)
+// @route   POST /api/patient/analyze-symptoms
+// @access  Private (Student)
+export const analyzeSymptoms = async (req, res) => {
+  try {
+    const { symptoms, symptomDescription, vitals } = req.body;
+
+    if (!symptoms || symptoms.length === 0) {
+      return res.status(400).json({ message: 'Please provide symptoms' });
+    }
+
+    const client = getGroqClient();
+    if (!client) {
+      return res.status(500).json({
+        message: 'Symptom analyzer is not configured. Please add GROQ_API_KEY.',
+      });
+    }
+
+    // Build vitals string
+    const vitalsStr = vitals ? `
+Vitals:
+${vitals.temperature ? `- Temperature: ${vitals.temperature}°F` : ''}
+${vitals.bloodPressure ? `- Blood Pressure: ${vitals.bloodPressure}` : ''}
+${vitals.heartRate ? `- Heart Rate: ${vitals.heartRate} bpm` : ''}
+${vitals.oxygenLevel ? `- SpO2: ${vitals.oxygenLevel}%` : ''}
+` : '';
+
+    const prompt = `You are a medical triage and symptom analysis assistant. Analyze the following patient symptoms and provide a comprehensive assessment.
+
+Patient Symptoms: ${symptoms.join(', ')}
+${symptomDescription ? `Additional Description: ${symptomDescription}` : ''}
+${vitalsStr}
+
+Please provide a detailed analysis in the following JSON format (return ONLY valid JSON, no markdown):
+{
+  "possibleConditions": [
+    {
+      "condition": "condition name",
+      "probability": "high/medium/low",
+      "explanation": "why this condition could cause these symptoms"
+    }
+  ],
+  "severityAssessment": {
+    "level": "critical/high/medium/low",
+    "score": number between 0-100,
+    "reason": "brief explanation of severity"
+  },
+  "symptomAnalysis": {
+    "primarySymptoms": ["main symptoms"],
+    "symptomPattern": "description of symptom pattern",
+    "possibleOutbreaks": [
+      {
+        "outbreak": "outbreak/disease name",
+        "likelihood": "high/medium/low",
+        "explanation": "detailed explanation of why this outbreak could cause these symptoms, including how the symptoms relate to the disease mechanism"
+      }
+    ]
+  },
+  "recommendations": [
+    "immediate action 1",
+    "immediate action 2"
+  ],
+  "urgency": "immediate/urgent/moderate/routine",
+  "nextSteps": "what the patient should do next"
+}
+
+Focus on:
+1. Identifying possible outbreaks or diseases that could cause these symptoms
+2. Explaining WHY each outbreak/disease could cause these specific symptoms
+3. Providing clear, organized analysis
+4. Prioritizing most likely conditions first`;
+
+    const completion = await client.chat.completions.create({
+      messages: [{ role: "user", content: prompt }],
+      model: "llama-3.3-70b-versatile",
+      temperature: 0.2,
+      max_tokens: 2000,
+    });
+
+    const responseText = completion.choices[0]?.message?.content || "{}";
+
+    // Parse JSON from response
+    let analysis = {};
+    try {
+      // Find JSON in response
+      const jsonMatch = responseText.match(/\{[\s\S]*\}/);
+      if (jsonMatch) {
+        analysis = JSON.parse(jsonMatch[0]);
+      } else {
+        analysis = { error: "Could not parse analysis response" };
+      }
+    } catch (parseError) {
+      console.error("JSON parse error:", parseError);
+      analysis = { 
+        error: "Analysis parsing error",
+        rawResponse: responseText.substring(0, 500)
+      };
+    }
+
+    res.json({ analysis });
+  } catch (error) {
+    console.error("Symptom analysis error:", error);
+    res.status(500).json({ 
+      message: "Error analyzing symptoms",
+      error: error.message 
+    });
+  }
+};
 
 // @desc    Submit symptoms (Student)
 // @route   POST /api/patient/symptoms
