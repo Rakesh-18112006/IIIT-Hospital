@@ -2,6 +2,7 @@ import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
 import api from "../config/api";
+import Prescription from "../components/Prescription";
 import {
   Users,
   AlertCircle,
@@ -32,6 +33,8 @@ import {
   Upload,
   FileCheck,
   Download,
+  Pill,
+  Zap,
 } from "lucide-react";
 import QrScanner from "qr-scanner";
 
@@ -99,6 +102,12 @@ const DoctorDashboard = () => {
   const [patientQRScanned, setPatientQRScanned] = useState(false);
   const [scannedPatientData, setScannedPatientData] = useState(null);
   const [prescriptionSaving, setPrescriptionSaving] = useState(false);
+  
+  // AI Prescription Modal states
+  const [showAIPrescriptionModal, setShowAIPrescriptionModal] = useState(false);
+  const [showPatientQRScanner, setShowPatientQRScanner] = useState(false);
+  const [patientMedicalRecords, setPatientMedicalRecords] = useState(null);
+  const [qrScanningForPrescription, setQrScanningForPrescription] = useState(false);
 
   useEffect(() => {
     fetchQueue();
@@ -612,6 +621,65 @@ const DoctorDashboard = () => {
       console.error("Error creating diet:", error);
     }
   };
+
+  // AI Prescription Handlers
+  const handleOpenAIPrescription = () => {
+    if (!selectedAppointment) {
+      alert("Please select an appointment first");
+      return;
+    }
+    // Set the selected appointment properly before opening modal
+    setShowAIPrescriptionModal(true);
+  };
+
+  const handleScanPatientQR = async (scannedData) => {
+    try {
+      setQrScanningForPrescription(true);
+      // scannedData should contain patient ID or email
+      const patientId = scannedData;
+      const response = await api.get(`/patient/${patientId}/medical-records`);
+      setPatientMedicalRecords(response.data);
+      setShowPatientQRScanner(false);
+      alert("Patient medical records loaded successfully!");
+    } catch (error) {
+      console.error("Error loading patient records:", error);
+      alert(error.response?.data?.message || "Failed to load patient records");
+    } finally {
+      setQrScanningForPrescription(false);
+    }
+  };
+
+  const handleSaveAIPrescription = async (prescriptionData) => {
+    try {
+      setPrescriptionSaving(true);
+      
+      // Save prescription via API
+      const response = await api.post("/prescriptions/save", {
+        appointmentId: selectedAppointment._id,
+        patientId: selectedAppointment.patientId?._id || selectedAppointment.patientId,
+        diagnosis: prescriptionData.diagnosis,
+        symptoms: prescriptionData.symptoms,
+        medicines: prescriptionData.medicines,
+        notes: prescriptionData.notes,
+        advice: prescriptionData.advice,
+        interactions: prescriptionData.interactions,
+      });
+
+      alert("Prescription saved successfully! Email sent to student.");
+      setShowAIPrescriptionModal(false);
+      setPrescription("");
+      setAdvice("");
+      
+      // Refresh appointments
+      fetchAppointmentQueue();
+    } catch (error) {
+      console.error("Error saving prescription:", error);
+      alert(error.response?.data?.message || "Failed to save prescription");
+    } finally {
+      setPrescriptionSaving(false);
+    }
+  };
+
 
   const getSeverityColor = (severity) => {
     const colors = {
@@ -1345,40 +1413,125 @@ const DoctorDashboard = () => {
                               />
                             </div>
 
-                            {/* Prescription */}
-                            <div>
-                              <label className="font-semibold text-gray-800 block mb-2">
-                                Prescription
-                              </label>
-                              <textarea
-                                value={prescription}
-                                onChange={(e) => setPrescription(e.target.value)}
-                                rows={3}
-                                className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-sky-500"
-                                placeholder="Add prescription..."
-                              />
+                            {/* Hospital Theme Medical Receipt with AI Prescription */}
+                            <div className="bg-gradient-to-br from-sky-50 to-blue-50 rounded-lg border-2 border-sky-200 p-6">
+                              <div className="bg-gradient-to-r from-sky-600 to-blue-700 text-white rounded-t-lg p-4 -m-6 mb-4">
+                                <h3 className="text-2xl font-bold mb-1">🏥 MEDICAL PRESCRIPTION RECEIPT</h3>
+                                <p className="text-sky-100 text-sm">IIIT Hospital - Professional Prescription Form</p>
+                              </div>
+
+                              {/* Patient & Doctor Info Header */}
+                              <div className="grid grid-cols-2 gap-4 mb-4 p-3 bg-white rounded border border-sky-200">
+                                <div>
+                                  <p className="text-xs text-gray-500 font-semibold">PATIENT</p>
+                                  <p className="text-sm font-bold text-gray-800">{selectedAppointment.student?.name}</p>
+                                  <p className="text-xs text-gray-600">ID: {selectedAppointment.studentDetails?.studentId}</p>
+                                </div>
+                                <div>
+                                  <p className="text-xs text-gray-500 font-semibold">DOCTOR</p>
+                                  <p className="text-sm font-bold text-gray-800">Dr. {user?.name}</p>
+                                  <p className="text-xs text-gray-600">{user?.department}</p>
+                                </div>
+                                <div>
+                                  <p className="text-xs text-gray-500 font-semibold">DATE</p>
+                                  <p className="text-sm font-bold text-gray-800">{new Date().toLocaleDateString()}</p>
+                                </div>
+                                <div>
+                                  <p className="text-xs text-gray-500 font-semibold">TIME</p>
+                                  <p className="text-sm font-bold text-gray-800">{new Date().toLocaleTimeString()}</p>
+                                </div>
+                              </div>
+
+                              {/* AI Prescription Writer Button */}
+                              <button
+                                onClick={() => {
+                                  setSelectedAppointment(selectedAppointment);
+                                  setShowAIPrescriptionModal(true);
+                                }}
+                                className="w-full mb-4 px-4 py-3 bg-gradient-to-r from-purple-500 to-pink-500 hover:from-purple-600 hover:to-pink-600 text-white rounded-lg font-bold flex items-center justify-center gap-2 transition-colors"
+                              >
+                                <Zap className="h-5 w-5" />
+                                ✨ Open AI Prescription Writer
+                              </button>
+
+                              {/* Diagnosis Input */}
+                              <div className="mb-4">
+                                <label className="text-xs font-bold text-gray-700 block mb-1">DIAGNOSIS</label>
+                                <input
+                                  type="text"
+                                  placeholder="Enter primary diagnosis..."
+                                  className="w-full px-3 py-2 border border-sky-300 rounded-lg focus:ring-2 focus:ring-sky-500 bg-white"
+                                />
+                              </div>
+
+                              {/* Prescription Content */}
+                              <div className="mb-4">
+                                <label className="text-xs font-bold text-gray-700 block mb-2">💊 MEDICINES PRESCRIBED</label>
+                                <div className="bg-white rounded border border-sky-300 p-3 min-h-24">
+                                  <textarea
+                                    value={prescription}
+                                    onChange={(e) => setPrescription(e.target.value)}
+                                    rows={4}
+                                    className="w-full px-3 py-2 border-0 focus:ring-0 bg-transparent focus:outline-none text-sm"
+                                    placeholder="Type medicine name + TAB for AI suggestions&#10;e.g., Paracetamol 500mg - Once daily for 5 days&#10;       Cetirizine 10mg - Morning and night for 7 days"
+                                  />
+                                </div>
+                                <p className="text-xs text-sky-600 mt-2">💡 Tip: Type medicine name and press TAB for AI autocomplete with dosage suggestions</p>
+                              </div>
+
+                              {/* Patient Advice */}
+                              <div className="mb-4">
+                                <label className="text-xs font-bold text-gray-700 block mb-1">📋 PATIENT ADVICE</label>
+                                <textarea
+                                  value={advice}
+                                  onChange={(e) => setAdvice(e.target.value)}
+                                  rows={2}
+                                  className="w-full px-3 py-2 border border-sky-300 rounded-lg focus:ring-2 focus:ring-sky-500 bg-white"
+                                  placeholder="Follow-up instructions, dietary recommendations, lifestyle changes..."
+                                />
+                              </div>
+
+                              {/* Receipt Footer */}
+                              <div className="bg-white rounded border border-sky-200 p-3 text-center">
+                                <p className="text-xs text-gray-600">
+                                  📧 Prescription will be emailed to patient | 💾 Saved to medical records
+                                </p>
+                              </div>
                             </div>
 
-                            {/* Advice */}
+                            {/* Additional Advice Section */}
                             <div>
                               <label className="font-semibold text-gray-800 block mb-2">
-                                Additional Advice
+                                Follow-up Instructions
                               </label>
                               <textarea
                                 value={advice}
                                 onChange={(e) => setAdvice(e.target.value)}
                                 rows={2}
                                 className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-sky-500"
-                                placeholder="Add advice for patient..."
+                                placeholder="Add follow-up instructions..."
                               />
                             </div>
                           </>
                         )}
                       </div>
 
-                      {/* Action Buttons */}
-                      <div className="p-4 border-t border-sky-100 bg-gray-50">
-                        <div className="flex flex-wrap gap-2">
+                      {/* Action Buttons - Appointment Management */}
+                      <div className="p-4 border-t border-sky-100 bg-gradient-to-r from-sky-50 to-blue-50">
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-2 mb-3">
+                          {/* Reschedule Button */}
+                          {(selectedAppointment.status === "pending" ||
+                            selectedAppointment.status === "confirmed") && (
+                            <button
+                              onClick={() => setShowRescheduleModal(true)}
+                              className="px-4 py-2 bg-orange-500 hover:bg-orange-600 text-white rounded-lg font-medium flex items-center justify-center gap-2 transition-colors"
+                            >
+                              <CalendarClock className="h-4 w-4" />
+                              Reschedule
+                            </button>
+                          )}
+
+                          {/* Confirm Button */}
                           {selectedAppointment.status === "pending" && (
                             <button
                               onClick={() =>
@@ -1388,12 +1541,14 @@ const DoctorDashboard = () => {
                                 )
                               }
                               disabled={statusUpdateLoading}
-                              className="px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 disabled:opacity-50 flex items-center gap-2"
+                              className="px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 disabled:opacity-50 flex items-center justify-center gap-2 font-medium transition-colors"
                             >
                               <CheckCircle className="h-4 w-4" />
                               Confirm
                             </button>
                           )}
+
+                          {/* Start Consultation Button */}
                           {(selectedAppointment.status === "pending" ||
                             selectedAppointment.status === "confirmed") && (
                             <button
@@ -1404,12 +1559,38 @@ const DoctorDashboard = () => {
                                 )
                               }
                               disabled={statusUpdateLoading}
-                              className="px-4 py-2 bg-purple-500 text-white rounded-lg hover:bg-purple-600 disabled:opacity-50 flex items-center gap-2"
+                              className="px-4 py-2 bg-purple-500 text-white rounded-lg hover:bg-purple-600 disabled:opacity-50 flex items-center justify-center gap-2 font-medium transition-colors"
                             >
                               <Play className="h-4 w-4" />
                               Start Consultation
                             </button>
                           )}
+
+                          {/* Quick QR Scan & Prescription Button (Always Available) */}
+                          <button
+                            onClick={() => {
+                              setShowPatientQRScanner(true);
+                            }}
+                            className="px-4 py-2 bg-gradient-to-r from-purple-500 to-pink-500 hover:from-purple-600 hover:to-pink-600 text-white rounded-lg font-medium flex items-center justify-center gap-2 transition-colors"
+                          >
+                            <Camera className="h-4 w-4" />
+                            Quick QR Scan
+                          </button>
+                        </div>
+
+                        {/* AI Prescription - Always Prominent */}
+                        {selectedAppointment.status === "in-progress" || true && (
+                          <button
+                            onClick={handleOpenAIPrescription}
+                            className="w-full px-4 py-3 bg-gradient-to-r from-sky-500 to-cyan-500 hover:from-sky-600 hover:to-cyan-600 text-white rounded-lg font-bold flex items-center justify-center gap-2 transition-colors mb-3"
+                          >
+                            <Zap className="h-5 w-5" />
+                            Open AI Prescription Writer (Hospital Template)
+                          </button>
+                        )}
+
+                        {/* Other action buttons */}
+                        <div className="flex flex-wrap gap-2">
                           {selectedAppointment.status === "in-progress" && patientQRScanned && (
                             <button
                               onClick={handleSavePrescription}
@@ -1424,7 +1605,7 @@ const DoctorDashboard = () => {
                               ) : (
                                 <>
                                   <CheckCircle className="h-4 w-4" />
-                                  Save Prescription & Complete
+                                  Save & Complete
                                 </>
                               )}
                             </button>
@@ -1472,38 +1653,8 @@ const DoctorDashboard = () => {
                               Reschedule
                             </button>
                           )}
-
-                          {/* Priority Adjustment */}
-                          <div className="ml-auto flex items-center gap-2">
-                            <span className="text-sm text-gray-500">
-                              Adjust Priority:
-                            </span>
-                            <select
-                              value={selectedAppointment.severity}
-                              onChange={(e) => {
-                                const newSeverity = e.target.value;
-                                const riskScores = {
-                                  critical: 90,
-                                  high: 60,
-                                  medium: 35,
-                                  low: 15,
-                                };
-                                handleUpdateAppointmentPriority(
-                                  selectedAppointment._id,
-                                  newSeverity,
-                                  riskScores[newSeverity],
-                                  "Manual adjustment by doctor"
-                                );
-                              }}
-                              className="px-3 py-1.5 border border-gray-300 rounded-lg text-sm"
-                            >
-                              <option value="critical">Critical</option>
-                              <option value="high">High</option>
-                              <option value="medium">Medium</option>
-                              <option value="low">Low</option>
-                            </select>
-                          </div>
                         </div>
+
                         {statusUpdateLoading && (
                           <div className="mt-2 flex items-center gap-2 text-sm text-gray-500">
                             <Loader2 className="h-4 w-4 animate-spin" />
@@ -1797,18 +1948,49 @@ const DoctorDashboard = () => {
                           </div>
 
                           {/* Prescription */}
-                          <div>
-                            <label className="text-sm font-medium text-gray-700 mb-2 block">
-                              Prescription
-                            </label>
-                            <textarea
-                              value={prescription}
-                              onChange={(e) => setPrescription(e.target.value)}
-                              rows={2}
-                              className="w-full px-3 py-2 border border-sky-200 rounded-lg focus:ring-2 focus:ring-sky-500 focus:border-transparent outline-none"
-                              placeholder="Enter prescription..."
-                            />
+                          {/* AI Prescription Section */}
+                          <div className="space-y-3">
+                            <div className="flex items-center gap-2 mb-3">
+                              <Pill className="h-5 w-5 text-sky-600" />
+                              <label className="text-sm font-semibold text-gray-700">
+                                AI-Powered Prescription
+                              </label>
+                            </div>
+
+                            {/* QR Scanner & Medical Records Button */}
+                            <button
+                              onClick={() => setShowPatientQRScanner(true)}
+                              disabled={!selectedAppointment}
+                              className="w-full flex items-center justify-center gap-2 bg-purple-500 hover:bg-purple-600 disabled:bg-gray-300 text-white px-4 py-2 rounded-lg transition-colors font-medium"
+                            >
+                              <Camera className="h-4 w-4" />
+                              Scan/Upload Patient QR Code
+                            </button>
+
+                            {/* Show loaded medical records */}
+                            {patientMedicalRecords && (
+                              <div className="bg-blue-50 border border-blue-200 rounded-lg p-3">
+                                <p className="text-sm font-medium text-blue-900 mb-2">
+                                  ✓ Medical Records Loaded
+                                </p>
+                                <div className="text-xs text-blue-700 space-y-1">
+                                  <p>Previous diagnoses: {patientMedicalRecords.diagnoses?.length || 0}</p>
+                                  <p>Allergies: {patientMedicalRecords.allergies?.join(", ") || "None"}</p>
+                                </div>
+                              </div>
+                            )}
+
+                            {/* Open AI Prescription Button */}
+                            <button
+                              onClick={handleOpenAIPrescription}
+                              disabled={!selectedAppointment}
+                              className="w-full flex items-center justify-center gap-2 bg-gradient-to-r from-sky-500 to-sky-600 hover:from-sky-600 hover:to-sky-700 disabled:from-gray-300 disabled:to-gray-300 text-white px-4 py-3 rounded-lg transition-colors font-semibold"
+                            >
+                              <Zap className="h-4 w-4" />
+                              Open AI Prescription Writer
+                            </button>
                           </div>
+
 
                           {/* Advice */}
                           <div>
@@ -2649,6 +2831,223 @@ const DoctorDashboard = () => {
                   >
                     Cancel
                   </button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* QR Scanner for Patient Medical Records */}
+          {showPatientQRScanner && (
+            <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
+              <div className="bg-white rounded-xl p-6 w-full max-w-md">
+                <div className="flex justify-between items-center mb-4">
+                  <h3 className="text-lg font-semibold text-gray-800">
+                    Scan Patient QR Code
+                  </h3>
+                  <button
+                    onClick={() => {
+                      setShowPatientQRScanner(false);
+                      setScanMode("camera");
+                    }}
+                    className="text-gray-500 hover:text-gray-700"
+                  >
+                    <X className="h-5 w-5" />
+                  </button>
+                </div>
+
+                {/* Mode Selection */}
+                <div className="flex gap-2 mb-4">
+                  <button
+                    onClick={() => setScanMode("camera")}
+                    className={`flex-1 py-2 px-3 rounded-lg font-medium transition-colors ${
+                      scanMode === "camera"
+                        ? "bg-sky-500 text-white"
+                        : "bg-gray-100 text-gray-700"
+                    }`}
+                  >
+                    <Camera className="h-4 w-4 inline mr-2" />
+                    Camera
+                  </button>
+                  <button
+                    onClick={() => setScanMode("upload")}
+                    className={`flex-1 py-2 px-3 rounded-lg font-medium transition-colors ${
+                      scanMode === "upload"
+                        ? "bg-sky-500 text-white"
+                        : "bg-gray-100 text-gray-700"
+                    }`}
+                  >
+                    <Upload className="h-4 w-4 inline mr-2" />
+                    Upload
+                  </button>
+                </div>
+
+                {/* Camera Mode */}
+                {scanMode === "camera" && (
+                  <div className="space-y-3">
+                    <div ref={setVideoRef} className="bg-black rounded-lg overflow-hidden mb-3" />
+                    {qrScanError && (
+                      <div className="bg-red-100 border border-red-300 text-red-700 px-3 py-2 rounded-lg text-sm">
+                        {qrScanError}
+                      </div>
+                    )}
+                    <button
+                      onClick={async () => {
+                        if (!videoRef) return;
+                        try {
+                          setQrScanningForPrescription(true);
+                          const scanner = new QrScanner(
+                            videoRef,
+                            (result) => {
+                              handleScanPatientQR(result.data);
+                              scanner.stop();
+                            },
+                            { onDecodeError: (error) => setQrScanError(error.message) }
+                          );
+                          await scanner.start();
+                          setQrScannerInstance(scanner);
+                        } catch (error) {
+                          setQrScanError(error.message);
+                        } finally {
+                          setQrScanningForPrescription(false);
+                        }
+                      }}
+                      disabled={qrScanningForPrescription}
+                      className="w-full bg-sky-500 hover:bg-sky-600 disabled:bg-gray-300 text-white px-4 py-2 rounded-lg font-medium transition-colors"
+                    >
+                      {qrScanningForPrescription ? "Starting..." : "Start Camera"}
+                    </button>
+                  </div>
+                )}
+
+                {/* Upload Mode */}
+                {scanMode === "upload" && (
+                  <div className="space-y-3">
+                    <label className="block">
+                      <div className="border-2 border-dashed border-sky-300 rounded-lg p-6 text-center cursor-pointer hover:border-sky-500 transition-colors">
+                        <Upload className="h-8 w-8 text-sky-400 mx-auto mb-2" />
+                        <p className="text-sm text-gray-700">Click to upload QR image</p>
+                      </div>
+                      <input
+                        type="file"
+                        accept="image/*"
+                        onChange={async (e) => {
+                          const file = e.target.files?.[0];
+                          if (!file) return;
+                          try {
+                            setQrScanningForPrescription(true);
+                            const result = await QrScanner.scanImage(file);
+                            handleScanPatientQR(result);
+                          } catch (error) {
+                            alert("Could not scan QR code from image");
+                          } finally {
+                            setQrScanningForPrescription(false);
+                          }
+                        }}
+                        className="hidden"
+                      />
+                    </label>
+                  </div>
+                )}
+
+                <button
+                  onClick={() => {
+                    setShowPatientQRScanner(false);
+                    setScanMode("camera");
+                  }}
+                  className="w-full mt-4 px-4 py-2 border border-gray-200 text-gray-700 rounded-lg hover:bg-gray-50 font-medium"
+                >
+                  Close
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* AI Prescription Modal - Hospital Template */}
+          {showAIPrescriptionModal && (
+            <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50 overflow-y-auto">
+              <div className="bg-white rounded-xl w-full max-w-5xl my-8 shadow-2xl">
+                {/* Hospital Header */}
+                <div className="sticky top-0 bg-gradient-to-r from-sky-600 to-blue-700 text-white p-6 rounded-t-xl">
+                  <div className="flex justify-between items-start mb-4">
+                    <div>
+                      <h1 className="text-3xl font-bold">🏥 IIIT Hospital</h1>
+                      <p className="text-sky-100">Medical Prescription System</p>
+                      <p className="text-sm text-sky-200 mt-1">RGUKT Campus, Telangana</p>
+                    </div>
+                    <button
+                      onClick={() => {
+                        setShowAIPrescriptionModal(false);
+                        setPatientMedicalRecords(null);
+                      }}
+                      className="text-white hover:bg-white hover:bg-opacity-20 p-2 rounded-lg"
+                    >
+                      <X className="h-6 w-6" />
+                    </button>
+                  </div>
+
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">
+                    <div>
+                      <p className="text-sky-200">Patient</p>
+                      <p className="font-semibold">{selectedAppointment?.student?.name || "N/A"}</p>
+                    </div>
+                    <div>
+                      <p className="text-sky-200">Student ID</p>
+                      <p className="font-semibold">{selectedAppointment?.studentDetails?.studentId || "N/A"}</p>
+                    </div>
+                    <div>
+                      <p className="text-sky-200">Doctor</p>
+                      <p className="font-semibold">Dr. {user?.name || "Unknown"}</p>
+                    </div>
+                    <div>
+                      <p className="text-sky-200">Date</p>
+                      <p className="font-semibold">{new Date().toLocaleDateString()}</p>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Prescription Content */}
+                {selectedAppointment && (
+                  <div className="p-8 max-h-[70vh] overflow-y-auto">
+                    <div className="mb-6 p-4 bg-blue-50 rounded-lg border-l-4 border-blue-500">
+                      <h3 className="text-sm font-semibold text-blue-900 mb-2">💡 AI-Assisted Prescription Writer</h3>
+                      <p className="text-xs text-blue-800">
+                        Start typing a medicine name and press TAB for AI-powered autocomplete. The system will fill in dosage, frequency, and duration automatically using Groq LLM.
+                      </p>
+                    </div>
+
+                    {/* Patient Medical Records Summary */}
+                    {patientMedicalRecords && (
+                      <div className="mb-6 p-4 bg-yellow-50 rounded-lg border border-yellow-200">
+                        <h4 className="font-semibold text-yellow-900 mb-2 flex items-center gap-2">
+                          <AlertCircle className="h-4 w-4" />
+                          Patient Medical Context Loaded
+                        </h4>
+                        <div className="grid grid-cols-2 gap-3 text-sm">
+                          <div>
+                            <p className="text-yellow-800">Allergies: <span className="font-semibold">{patientMedicalRecords.allergies?.join(", ") || "None known"}</span></p>
+                          </div>
+                          <div>
+                            <p className="text-yellow-800">Previous Conditions: <span className="font-semibold">{patientMedicalRecords.diagnoses?.length || 0} records</span></p>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Main Prescription Component */}
+                    <Prescription
+                      appointment={selectedAppointment}
+                      patientData={patientMedicalRecords}
+                      doctorName={user?.name || "Dr. Unknown"}
+                      doctorDepartment={user?.department || "Internal Medicine"}
+                      hospitalName="IIIT Hospital"
+                      onSave={handleSaveAIPrescription}
+                    />
+                  </div>
+                )}
+
+                {/* Footer */}
+                <div className="bg-gray-50 p-4 border-t border-gray-200 rounded-b-xl text-center text-xs text-gray-600">
+                  <p>✓ AI-Assisted Prescription • Auto-save to Medical Records • Email Notification Sent</p>
                 </div>
               </div>
             </div>
