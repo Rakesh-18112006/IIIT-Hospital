@@ -1933,8 +1933,8 @@ const StudentDashboard = () => {
                   {/* Booking Modal */}
                   {showBookingModal && selectedSlot && (
                     <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
-                      <div className="bg-white rounded-xl w-full max-w-lg shadow-2xl">
-                        <div className="p-4 border-b border-gray-200 flex items-center justify-between">
+                      <div className="bg-white rounded-xl w-full max-w-lg shadow-2xl flex flex-col max-h-[90vh]">
+                        <div className="p-4 border-b border-gray-200 flex items-center justify-between flex-shrink-0">
                           <h3 className="text-lg font-semibold text-gray-800">
                             Book Appointment
                           </h3>
@@ -1952,8 +1952,9 @@ const StudentDashboard = () => {
 
                         <form
                           onSubmit={handleBookAppointment}
-                          className="p-4 space-y-4"
+                          className="flex flex-col flex-1 min-h-0"
                         >
+                          <div className="p-4 space-y-4 overflow-y-auto flex-1">
                           {/* Appointment Info */}
                           <div className="bg-sky-50 rounded-lg p-4">
                             <div className="grid grid-cols-2 gap-4 text-sm">
@@ -2081,8 +2082,9 @@ const StudentDashboard = () => {
                               {bookingError}
                             </div>
                           )}
+                          </div>
 
-                          <div className="flex gap-3 pt-2">
+                          <div className="flex gap-3 pt-2 px-4 pb-4 border-t border-gray-200 flex-shrink-0">
                             <button
                               type="button"
                               onClick={() => {

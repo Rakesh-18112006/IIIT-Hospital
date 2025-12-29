@@ -172,8 +172,8 @@ export const bookAppointment = async (req, res) => {
       });
     }
 
-    // Analyze health problem using AI
-    const analysis = analyzeHealthProblem(healthProblem, symptoms || []);
+    // Analyze health problem using AI (LLM-based with fallback)
+    const analysis = await analyzeHealthProblem(healthProblem, symptoms || []);
 
     // Calculate end time (15 minutes after start)
     const [hours, minutes] = slotTime.split(":").map(Number);
